@@ -10,23 +10,28 @@ enum RESP_TYPE {
 };
 
 struct resp_array {
-  int length;
-  struct resp_response **elements;
+  long length;
+  struct resp_response *elements;
 };
 
 union RESP_DATA {
   char*     simple_string;
   char*     error_string;
   long long integer;
-  char*     processing_error;
+  const char*     processing_error;
   char*     bulk_string;
-  struct resp_array *array;
+  struct resp_array array;
 };
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
+// Can't be packed better
 struct resp_response {
   enum RESP_TYPE type;
   union RESP_DATA data;
 };
 
-struct resp_response *process_packet(struct data_wrap *dw);
+#pragma GCC diagnostic pop
+
+int process_packet(struct data_wrap *dw, struct resp_response*);
 void print_response(struct resp_response *r);

@@ -13,26 +13,38 @@ struct conn_data {
   int fd;
 };
 
-const char ok_msg[] = "+OK\r\n";
+static const char ok_msg[] = "+OK\r\n";
 
-void *connhandler(void *_cdata) {
+static void *connhandler(void *_cdata) {
   struct conn_data *cdata = _cdata;
-  struct resp_response *resp;
   struct data_wrap *dw = dw_init(cdata->fd, 256);
   enum RESP_TYPE type;
+  struct resp_response resp;
+  int pack_err;
+  char error_buf[512];
+  int error_buf_len;
   do {
-    resp = process_packet(dw);
-    if (resp == NULL) {
+    pack_err = process_packet(dw, &resp);
+    if (pack_err == -1) {
       printf("Connection %d closed\n", cdata->fd);
-      close(cdata->fd);
-      return NULL;
+      break;
+    } else if (pack_err == -2) {
+      printf("Protocol error: %d\n", pack_err);
+      break;
     }
-    print_response(resp);
-    send(cdata->fd, ok_msg, sizeof(ok_msg) - 1, MSG_NOSIGNAL);
-    type = resp->type;
-    free(resp);
+    print_response(&resp);
+    type = resp.type;
+    if (type == PROCESSING_ERROR) {
+      error_buf_len = snprintf(error_buf, sizeof(error_buf), "%s", resp.data.processing_error);
+      if (error_buf_len > 0) {
+        send(cdata->fd, error_buf, (size_t)(error_buf_len), MSG_NOSIGNAL);
+      } else {
+        printf("Failed to send error\n");
+      }
+    } else {
+      send(cdata->fd, ok_msg, sizeof(ok_msg) - 1, MSG_NOSIGNAL);
+    }
   } while (type != PROCESSING_ERROR);
-  printf("Error!!!! Bad!!!!! Connhandler!!!!\n");
   close(cdata->fd);
   return NULL;
 }
@@ -76,5 +88,4 @@ int main() {
     obj->fd = client_sock;
     pthread_create(&pid, NULL, connhandler, obj);
   }
-  return 0;
 }

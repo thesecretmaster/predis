@@ -2,179 +2,240 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-int base_string_size = 8;
-char *process_string_err = "process string error";
+static const char *process_string_net_err = "process string network error";
+static const char *process_string_malloc_err = "process string malloc error";
+static const char *process_string_dw_err = "process string dw error";
+static const char *process_string_length_err = "process string length error";
+static const int max_string_size = 512;
+static const char resp_line_terminator = '\n';
 
-struct resp_response *process_string(struct data_wrap *dw) {
-  struct resp_response *response = malloc(sizeof(struct resp_response));
-  int size = base_string_size;
-  char *buf = malloc(sizeof(char) * (size));
-  const char end = '\n';
-  int buf_size_incr = base_string_size;
-  int retval = dw_read(dw, buf, size, &end);
-  while (retval == -1) {
-    buf_size_incr = base_string_size;
-    buf = realloc(buf, sizeof(char) * (size + buf_size_incr));
-    retval = dw_read(dw, buf + size, buf_size_incr, &end);
+static void process_string(struct data_wrap *dw, struct resp_response * const response) {
+  size_t size = 0;
+  size_t buf_size_incr;
+  char *buf = NULL;
+  char *nbuf;
+  long retval;
+  do {
+    buf_size_incr = size < max_string_size ? size : max_string_size;
+    if (buf_size_incr < 8)
+      buf_size_incr = 8;
+    nbuf = realloc(buf, sizeof(char) * (size + buf_size_incr));
+    if (nbuf == NULL) {
+      free(buf);
+      response->type = PROCESSING_ERROR;
+      response->data.processing_error = process_string_malloc_err;
+      return;
+    } else {
+      buf = nbuf;
+    }
+    retval = dw_read(dw, buf + size, (long)buf_size_incr, &resp_line_terminator, NULL, NULL);
     size += buf_size_incr;
-  }
-  if (retval == -2) {
+  } while (retval == -1);
+  if (retval <= -2) {
     free(buf);
     response->type = PROCESSING_ERROR;
-    response->data.processing_error = process_string_err;
+    response->data.processing_error = process_string_net_err;
+    if (retval <= -4)
+      response->data.processing_error = process_string_dw_err;
+  } else if ((long)(size - buf_size_incr) + retval - 2 < 0) {
+    response->type = PROCESSING_ERROR;
+    response->data.processing_error = process_string_length_err;
   } else {
-    buf[size - buf_size_incr + retval - 2] = '\0';
+    buf[(long)(size - buf_size_incr) + retval - 2] = '\0';
     // Note: If it's an error string, we fix it outside this method
     response->type = SIMPLE_STRING;
     response->data.simple_string = buf;
   }
-  return response;
 }
 
-struct resp_response *process_int(struct data_wrap *dw) {
-  struct resp_response *response = process_string(dw);
-  long long i;
-  if (response->type != PROCESSING_ERROR) {
-    i = strtoll(response->data.simple_string, NULL, 10);
-    free(response->data.simple_string);
-    response->type = INTEGER;
-    response->data.integer = i;
-  }
-  return response;
+static const char* process_int_net_err = "process int network error";
+
+static void process_int(struct data_wrap *dw, struct resp_response * const response) {
+  long long i = 0;
+  char *nocopy_ptr;
+  bool nocopy_again;
+  long recv_len;
+  do {
+    recv_len = dw_read(dw, NULL, -1, &resp_line_terminator, &nocopy_ptr, &nocopy_again);
+    if (recv_len >= 0) {
+      i = i * 10 * recv_len;
+      i += strtoll(nocopy_ptr, NULL, 10);
+    } else {
+      response->type = PROCESSING_ERROR;
+      response->data.processing_error = process_int_net_err;
+      return;
+    }
+  } while (nocopy_again);
+  response->type = INTEGER;
+  response->data.integer = i;
 }
 
-char *process_bulk_string_err = "error in bulk str";
+static const char *process_bulk_string_net_err = "error in getting bulk string from network";
+static const char *process_bulk_string_malloc_err = "error in allocating memory for bulk string";
+static const char *process_bulk_string_length_err = "length of string too negative";
 
-struct resp_response *process_bulk_string(struct data_wrap *dw) {
-  struct resp_response *response = process_int(dw);
+static void process_bulk_string(struct data_wrap *dw, struct resp_response * const response) {
+  process_int(dw, response);
   char *bs_buf;
-  int main_recv;
-  int cleanup_recv;
+  long main_recv;
+  long cleanup_recv;
+  size_t bs_length;
   if (response->type != PROCESSING_ERROR) {
     // Handle the case of a bulk string length -1 being a NULL
     if (response->data.integer == -1) {
       bs_buf = NULL;
+    } else if (response->data.integer < -1) {
+      response->type = PROCESSING_ERROR;
+      response->data.processing_error = process_bulk_string_length_err;
+      return;
     } else {
-      bs_buf = malloc(sizeof(char) * (response->data.integer + 1));
+      bs_length = (size_t)response->data.integer;
+      bs_buf = malloc(sizeof(char) * (bs_length + 1));
+      if (bs_buf == NULL) {
+        response->type = PROCESSING_ERROR;
+        response->data.processing_error = process_bulk_string_malloc_err;
+        return;
+      }
       // The second read is to handle the trailing \r\n
-      main_recv = dw_read(dw, bs_buf, response->data.integer, NULL);
-      cleanup_recv = dw_read(dw, NULL, 2, NULL);
+      main_recv = dw_read(dw, bs_buf, (long)bs_length, NULL, NULL, NULL);
+      cleanup_recv = dw_read(dw, NULL, 2, NULL, NULL, NULL);
       if (main_recv != -1 && cleanup_recv != -1) {
         response->type = PROCESSING_ERROR;
-        response->data.processing_error = process_bulk_string_err;
-        return response;
+        response->data.processing_error = process_bulk_string_net_err;
+        return;
       }
-      bs_buf[response->data.integer] = '\0';
+      bs_buf[bs_length] = '\0';
     }
     response->type = BULK_STRING;
     response->data.bulk_string = bs_buf;
   }
-  return response;
 }
 
-struct resp_response *process_array(struct data_wrap *dw) {
-  struct resp_response *response = process_int(dw);
-  struct resp_array *ary;
+static const char *process_array_malloc_err = "error allocating memory for array";
+static const char *process_array_length_err = "array length less than -1";
+
+static void process_array(struct data_wrap *dw, struct resp_response * const response) {
+  process_int(dw, response);
+  long length;
+  struct resp_response *ary_elems;
   if (response->type != PROCESSING_ERROR) {
-    ary = malloc(sizeof(struct resp_array));
-    ary->length = response->data.integer;
+    length = response->data.integer;
+    response->data.array.length = length;
     // Handle the case of a bulk string length -1 being a NULL
-    if (response->data.integer == -1) {
-      ary->elements = NULL;
+    if (length == -1) {
+      response->data.array.elements = NULL;
+    } else if (length < -1) {
+      response->type = PROCESSING_ERROR;
+      response->data.processing_error = process_array_length_err;
+      return;
     } else {
-      ary->elements = malloc(sizeof(struct resp_response*) * response->data.integer);
-      for (int i = 0; i < response->data.integer; i++) {
-        ary->elements[i] = process_packet(dw);
+      ary_elems = malloc(sizeof(struct resp_response) * (size_t)length);
+      if (ary_elems == NULL) {
+        response->type = PROCESSING_ERROR;
+        response->data.processing_error = process_array_malloc_err;
+        return;
+      }
+      response->data.array.elements = ary_elems;
+      for (int i = 0; i < length; i++) {
+        process_packet(dw, &response->data.array.elements[i]);
       }
     }
     response->type = ARRAY;
-    response->data.array = ary;
   }
-  return response;
 }
 
-void print_response_inner(struct resp_response *r, int depth) {
+static void print_response_inner(struct resp_response *r, int depth) {
   if (r == NULL) {
     printf("Resp is null\n");
     return;
   }
   switch (r->type) {
     case PROCESSING_ERROR : {
-      printf("A processing error occured\n");
+      printf("A processing error occured");
       break;
     }
     case SIMPLE_STRING : {
-      printf("SS| \"%s\"\n", r->data.simple_string);
+      printf("\"%s\"", r->data.simple_string);
       break;
     }
     case ERROR_STRING : {
-      printf("ES| \"%s\"\n", r->data.error_string);
+      printf("ERR \"%s\"", r->data.error_string);
       break;
     }
     case INTEGER : {
-      printf("I | %lld\n", r->data.integer);
+      printf("%lld", r->data.integer);
       break;
     }
     case BULK_STRING : {
-      printf("BS| \"%s\"\n", r->data.bulk_string == NULL ? "(null bulk string)" : r->data.bulk_string);
+      printf("(BS) \"%s\"", r->data.bulk_string == NULL ? "(null bulk string)" : r->data.bulk_string);
       break;
     }
     case ARRAY : {
-      for (int i = 0; i < r->data.array->length; i++) {
+      printf("[\n");
+      for (int i = 0; i < r->data.array.length; i++) {
         for (int j = 0; j < depth; j++) {
-          printf("   ");
+          printf("  ");
         }
-        printf("%d|", i + 1);
-        if (r->data.array->elements[i]->type == ARRAY) {
-          printf("A%d\n", r->data.array->length);
-        }
-        print_response_inner(r->data.array->elements[i], depth + 1);
+        // printf("%d. ", i + 1);
+        print_response_inner(&r->data.array.elements[i], depth + 1);
+        if (i < r->data.array.length - 1)
+          printf(",");
+        printf("\n");
       }
+      for (int j = 0; j < depth - 1; j++) {
+        printf("  ");
+      }
+      printf("]");
       break;
     }
   }
+  if (depth == 1)
+    printf("\n");
 }
 
 void print_response(struct resp_response *r) {
   print_response_inner(r, 1);
 }
 
-struct resp_response *process_packet(struct data_wrap *dw) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+
+int process_packet(struct data_wrap *dw, struct resp_response * const response) {
   char raw_type;
-  if (dw_read(dw, &raw_type, 1, NULL) != -1) {
-    printf("Connectino closed\n");
-    return NULL;
+  long rval = dw_read(dw, &raw_type, 1, NULL, NULL, NULL);
+  if (rval == -3 || rval == -2) {
+    // Connection is closed, can't read type
+    return -1;
   }
-  struct resp_response *response;
   switch((enum RESP_TYPE)raw_type) {
     case SIMPLE_STRING : {
-      response = process_string(dw);
+      process_string(dw, response);
       break;
     }
     case ERROR_STRING : {
-      response = process_string(dw);
-      response->type = ERROR_STRING;
+      process_string(dw, response);
+      if (response->type == SIMPLE_STRING)
+        response->type = ERROR_STRING;
       break;
     }
     case INTEGER : {
-      response = process_int(dw);
+      process_int(dw, response);
       break;
     }
     case BULK_STRING : {
-      response = process_bulk_string(dw);
+      process_bulk_string(dw, response);
       break;
     }
     case ARRAY : {
-      response = process_array(dw);
+      process_array(dw, response);
       break;
     }
     default : {
       printf("Invalid type %c\n", raw_type);
-      return NULL;
+      return -2;
     }
   }
-  if (response == NULL) {
-    printf("NULL REPOSNE OF TEYP %c\n", raw_type);
-  }
-  return response;
+  return 0;
 }
+
+#pragma GCC diagnostic pop
