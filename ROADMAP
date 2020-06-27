@@ -5,10 +5,6 @@ one that does resp_parser and reply stuff
 
 Long Term: "Connection Groups" with `poll` / `select` for IO
 
-## Big HT
-
-When we alloc a sentinel, alloc the first following node right after it for Speed(tm)
-
 ## Type system
 
 Make it better / real

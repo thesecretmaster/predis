@@ -10,7 +10,6 @@
 #include <dlfcn.h>
 #include "lib/resp_parser.h"
 #include "lib/command_ht.h"
-#include "lib/command_bitmap_init.c"
 #include "commands.h"
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
@@ -65,9 +64,8 @@ static void *connhandler(void *_cdata) {
   command_func cmd;
   union command_preload_strategies preload;
   char *cmd_name;
-  command_bitmap bm;
   bool preload_is_func;
-  int argc;
+  unsigned long argc;
   int rval;
   bool error_happened;
   char **ptrs;
@@ -92,16 +90,16 @@ static void *connhandler(void *_cdata) {
       } else {
         printf("Failed to send error\n");
       }
-    } else if (resp_type(resp) != ARRAY) {
+    } else if (resp_type(resp) != ARRAY || resp_array_length(resp) < 1) {
       printf("uh wrong type u fool\n");
     } else {
       cmd_name = resp_bulkstring_array_fetch(resp, 0);
-      argc = (int)(resp_array_length(resp) - 1);
-      ptrs = malloc(sizeof(char*) * argc);
-      for (int i = 0; i < argc; i++) {
-        ptrs[i] = resp_bulkstring_array_fetch(resp, i + 1);
-      }
-      if (cmd_name != NULL && argc >= 0 && (cmd = command_ht_fetch_command(cdata->command_ht, cmd_name)) != NULL && (preload = command_ht_fetch_preload(cdata->command_ht, cmd_name, &preload_is_func)).ptr != NULL) {
+      if (cmd_name != NULL && resp_array_length(resp) >= 1 && (cmd = command_ht_fetch_command(cdata->command_ht, cmd_name)) != NULL && (preload = command_ht_fetch_preload(cdata->command_ht, cmd_name, &preload_is_func)).ptr != NULL) {
+        argc = (unsigned long)(resp_array_length(resp) - 1);
+        ptrs = malloc(sizeof(char*) * argc);
+        for (unsigned long i = 0; i < argc; i++) {
+          ptrs[i] = resp_bulkstring_array_fetch(resp, i + 1);
+        }
         if (preload_is_func) {
           // bm = command_bitmap_init((unsigned long)argc);
           printf("Uhhh can't handle a preload func\n");
@@ -109,7 +107,7 @@ static void *connhandler(void *_cdata) {
           data = malloc(sizeof(struct predis_data) * argc);
           ctx->command_ht = cdata->command_ht;
           ctx->reply_fd = cdata->fd;
-          for (int i = 0; i < argc; i++) {
+          for (unsigned long i = 0; i < argc; i++) {
             if (preload.format_string[i] == '\0') {
               replySimpleString(ctx, "ERR wrong number of args");
               error_happened = true;
@@ -142,25 +140,26 @@ static void *connhandler(void *_cdata) {
           }
           // Fetch data, run preload, schedule, enqueue
           if (!error_happened) {
-            cmd(ctx, data, ptrs, argc);
+            cmd(ctx, data, ptrs, (int)argc);
           } else {
             replySimpleString(ctx, "ERR other thingie");
           }
           free(data);
         }
+        free(ptrs);
       } else {
         resp_print(resp);
       }
       if (ctx->needs_reply)
         send(cdata->fd, ok_msg, sizeof(ok_msg) - 1, MSG_NOSIGNAL);
-      free(ptrs);
     }
   } while (error_text == NULL);
   close(cdata->fd);
   return NULL;
 }
 #include <signal.h>
-static void sigint_handler(int i) {
+static void sigint_handler(int i) __attribute__((noreturn));
+static void sigint_handler(__attribute__((unused)) int i) {
   printf("Exiting!\n");
   exit(0);
 }

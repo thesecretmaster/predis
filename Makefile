@@ -1,6 +1,6 @@
 SHELL = bash
 CC = clang # gcc
-WARN_FLAGS = -Wall -Wpedantic -Weverything
+WARN_FLAGS = -Wall -Wpedantic -Weverything -Wextra
 LIGHT_WARN_FLAGS = -Wall
 SPEED_FLAGS = -Ofast -march=native
 DEBUG_FLAGS = -g -ggdb
@@ -11,7 +11,7 @@ ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 all: testing commands/saysomething.so commands/string.so
 
 # Command-shared.c shouldn't be in this list, it's just for temporaries
-testing: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/command_bitmap.c lib/hashtable.c command-shared.c
+testing: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c command-shared.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
 
 commands/%.so: commands/%.c command-shared.c lib/command_ht.c

@@ -2,10 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
+
+// Both are optimally packed
 struct command_ht_elem {
   const char *command_name;
-  union command_preload_strategies preload;
   command_func command;
+  union command_preload_strategies preload;
   bool preload_func;
 };
 
@@ -13,6 +17,8 @@ struct command_ht {
   struct command_ht_elem *elements;
   unsigned int size;
 };
+
+#pragma GCC diagnostic pop
 
 struct command_ht *command_ht_init(unsigned int size) {
   struct command_ht *ht = malloc(sizeof(struct command_ht));

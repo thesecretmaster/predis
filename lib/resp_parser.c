@@ -257,8 +257,8 @@ int resp_process_packet(struct data_wrap *dw, struct resp_response * const respo
 
 #pragma GCC diagnostic pop
 
-char *resp_bulkstring_array_fetch(struct resp_response *r, int idx) {
-  if (r->type != ARRAY || idx >= r->data.array.length)
+char *resp_bulkstring_array_fetch(struct resp_response *r, unsigned long idx) {
+  if (r->type != ARRAY || (long)idx >= r->data.array.length)
     return NULL;
   struct resp_response *resp = &(r->data.array.elements[idx]);
   if (resp->type != BULK_STRING)
