@@ -1,0 +1,18 @@
+## Network Improvments
+
+Short Term: Break each connction into two threads, one that just does recv and
+one that does resp_parser and reply stuff
+
+Long Term: "Connection Groups" with `poll` / `select` for IO
+
+## Big HT
+
+When we alloc a sentinel, alloc the first following node right after it for Speed(tm)
+
+## Type system
+
+Make it better / real
+
+## Commands
+
+Add deletion

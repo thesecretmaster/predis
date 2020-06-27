@@ -1,0 +1,6 @@
+commands/*.so
+perf.data*
+gmon.out
+*.profdata
+*.profraw
+vgcore.*

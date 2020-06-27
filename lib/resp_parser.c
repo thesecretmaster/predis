@@ -1,13 +1,22 @@
 #include "resp_parser.h"
+#include "resp_parser_types.h"
 #include <stdlib.h>
 #include <stdio.h>
+
+const char *resp_error(struct resp_response *r) {
+  return r->type == PROCESSING_ERROR ? r->data.processing_error : NULL;
+}
+
+struct resp_response *resp_alloc() {
+  return malloc(sizeof(struct resp_response));
+}
 
 static const char *process_string_net_err = "process string network error";
 static const char *process_string_malloc_err = "process string malloc error";
 static const char *process_string_dw_err = "process string dw error";
 static const char *process_string_length_err = "process string length error";
 static const int max_string_size = 512;
-static const char resp_line_terminator = '\n';
+static const char resp_line_terminator = '\r';
 
 static void process_string(struct data_wrap *dw, struct resp_response * const response) {
   size_t size = 0;
@@ -28,9 +37,10 @@ static void process_string(struct data_wrap *dw, struct resp_response * const re
     } else {
       buf = nbuf;
     }
-    retval = dw_read(dw, buf + size, (long)buf_size_incr, &resp_line_terminator, NULL, NULL);
+    retval = dw_read_copy(dw, buf + size, (long)buf_size_incr, &resp_line_terminator);
     size += buf_size_incr;
   } while (retval == -1);
+  dw_eat(dw, 2);
   if (retval <= -2) {
     free(buf);
     response->type = PROCESSING_ERROR;
@@ -41,7 +51,7 @@ static void process_string(struct data_wrap *dw, struct resp_response * const re
     response->type = PROCESSING_ERROR;
     response->data.processing_error = process_string_length_err;
   } else {
-    buf[(long)(size - buf_size_incr) + retval - 2] = '\0';
+    buf[(long)(size - buf_size_incr) + retval] = '\0';
     // Note: If it's an error string, we fix it outside this method
     response->type = SIMPLE_STRING;
     response->data.simple_string = buf;
@@ -56,16 +66,23 @@ static void process_int(struct data_wrap *dw, struct resp_response * const respo
   bool nocopy_again;
   long recv_len;
   do {
-    recv_len = dw_read(dw, NULL, -1, &resp_line_terminator, &nocopy_ptr, &nocopy_again);
-    if (recv_len >= 0) {
-      i = i * 10 * recv_len;
-      i += strtoll(nocopy_ptr, NULL, 10);
-    } else {
+    recv_len = dw_read_nocopy(dw, -1, &resp_line_terminator, &nocopy_ptr, &nocopy_again);
+    if (recv_len < 0) {
       response->type = PROCESSING_ERROR;
       response->data.processing_error = process_int_net_err;
       return;
     }
+    // Funny special case: if dw_read_nocopy hits the end, it doesn't know if
+    // there are more bytes of the number that are about to be fetched, so it
+    // says to do it again. But, if there are no numbers at the start of the
+    // buffer, it'll return a length of 0. Then when we multiply, that'd erase
+    // i and mess everything up.
+    if (recv_len != 0) {
+      i = i * 10 * recv_len;
+      i += strtoll(nocopy_ptr, NULL, 10);
+    }
   } while (nocopy_again);
+  dw_eat(dw, 2);
   response->type = INTEGER;
   response->data.integer = i;
 }
@@ -97,9 +114,9 @@ static void process_bulk_string(struct data_wrap *dw, struct resp_response * con
         return;
       }
       // The second read is to handle the trailing \r\n
-      main_recv = dw_read(dw, bs_buf, (long)bs_length, NULL, NULL, NULL);
-      cleanup_recv = dw_read(dw, NULL, 2, NULL, NULL, NULL);
-      if (main_recv != -1 && cleanup_recv != -1) {
+      main_recv = dw_read_copy(dw, bs_buf, (long)bs_length, NULL);
+      cleanup_recv = dw_eat(dw, 2);
+      if (main_recv <= 0 && cleanup_recv <= 0) {
         response->type = PROCESSING_ERROR;
         response->data.processing_error = process_bulk_string_net_err;
         return;
@@ -137,7 +154,7 @@ static void process_array(struct data_wrap *dw, struct resp_response * const res
       }
       response->data.array.elements = ary_elems;
       for (int i = 0; i < length; i++) {
-        process_packet(dw, &response->data.array.elements[i]);
+        resp_process_packet(dw, &response->data.array.elements[i]);
       }
     }
     response->type = ARRAY;
@@ -193,16 +210,16 @@ static void print_response_inner(struct resp_response *r, int depth) {
     printf("\n");
 }
 
-void print_response(struct resp_response *r) {
+void resp_print(struct resp_response *r) {
   print_response_inner(r, 1);
 }
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
-int process_packet(struct data_wrap *dw, struct resp_response * const response) {
+int resp_process_packet(struct data_wrap *dw, struct resp_response * const response) {
   char raw_type;
-  long rval = dw_read(dw, &raw_type, 1, NULL, NULL, NULL);
+  long rval = dw_read_copy(dw, &raw_type, 1, NULL);
   if (rval == -3 || rval == -2) {
     // Connection is closed, can't read type
     return -1;
@@ -239,3 +256,22 @@ int process_packet(struct data_wrap *dw, struct resp_response * const response) 
 }
 
 #pragma GCC diagnostic pop
+
+char *resp_bulkstring_array_fetch(struct resp_response *r, int idx) {
+  if (r->type != ARRAY || idx >= r->data.array.length)
+    return NULL;
+  struct resp_response *resp = &(r->data.array.elements[idx]);
+  if (resp->type != BULK_STRING)
+    return NULL;
+  return resp->data.bulk_string;
+}
+
+long resp_array_length(struct resp_response *r) {
+  if (r->type != ARRAY)
+    return -1;
+  return r->data.array.length;
+}
+
+enum RESP_TYPE resp_type(struct resp_response *r) {
+  return r->type;
+}
