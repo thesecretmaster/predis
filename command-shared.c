@@ -26,7 +26,11 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
     return 1;
 
   unsigned long ss_len = strlen(ss);
-  char *buf = malloc(sizeof(char) * (1 + ss_len + 2));
+  char *buf;
+  if (1 + ss_len + 2 > PREDIS_CTX_CHAR_BUF_SIZE)
+    buf = malloc(sizeof(char) * (1 + ss_len + 2));
+  else
+    buf = ctx->reply_buf;
   buf[0] = '+';
   buf[1 + ss_len] = '\r';
   buf[1 + ss_len + 1] = '\n';

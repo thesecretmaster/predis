@@ -33,7 +33,6 @@ long dw_eat(struct data_wrap *dw, long size) {
 }
 
 long dw_read_nocopy(struct data_wrap *dw, long size_raw, const char *end_char, char **start_ptr, bool *nocopy_again) {
-  *start_ptr = dw->ptr;
   char *end_ptr = NULL;
   bool nostop = size_raw == -1;
   unsigned long size = size_raw > 0 ? (unsigned long)size_raw : 0;
@@ -42,9 +41,10 @@ long dw_read_nocopy(struct data_wrap *dw, long size_raw, const char *end_char, c
   long bytes_copied = 0;
   ssize_t recv_len;
   *nocopy_again = false;
+  *start_ptr = dw->ptr;
   while (nostop || size > 0) {
     if (0 > dw->end - dw->ptr)
-      return -2;
+      return -3;
     remaining_bytes = (unsigned long)(dw->end - dw->ptr);
     copy_length = (remaining_bytes < size) || nostop ? remaining_bytes : size;
     if (end_char != NULL && (end_ptr = memchr(dw->ptr, *end_char, remaining_bytes)) != NULL)
@@ -69,7 +69,7 @@ long dw_read_nocopy(struct data_wrap *dw, long size_raw, const char *end_char, c
       } else {
         recv_len = recv(dw->fd, dw->end, (size_t)((dw->data + dw->length) - dw->end), 0x0);
         if (recv_len < 1) {
-          return recv_len;
+          return recv_len - 1;
         } else {
           dw->end += recv_len;
         }
@@ -89,7 +89,7 @@ long dw_read_copy(struct data_wrap *dw, char *buf, long size_raw, const char *en
   long bytes_copied = 0;
   while (nostop || size > 0) {
     if (0 > dw->end - dw->ptr) {
-      return -2;
+      return -3;
     }
     remaining_bytes = (unsigned long)(dw->end - dw->ptr);
     copy_length = (remaining_bytes < size) || nostop ? remaining_bytes : size;
@@ -119,7 +119,7 @@ long dw_read_copy(struct data_wrap *dw, char *buf, long size_raw, const char *en
         if (recv_len > 0) {
           dw->end += recv_len;
         } else {
-          return recv_len;
+          return recv_len - 1;
         }
       }
     }

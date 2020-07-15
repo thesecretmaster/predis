@@ -11,7 +11,7 @@ ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 all: testing commands/saysomething.so commands/string.so
 
 # Command-shared.c shouldn't be in this list, it's just for temporaries
-testing: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c command-shared.c
+testing: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c lib/1r1w_queue.c command-shared.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
 
 commands/%.so: commands/%.c command-shared.c lib/command_ht.c
@@ -23,10 +23,17 @@ strsearch: strsearch.c
 test: test.c
 	$(CC) $(CFLAGS) $^ -o $@
 
+foobar: tests/new_reader.c lib/resp_parser.c lib/netwrap.c
+	$(CC) -pthread $(DEBUG_FLAGS) $(SPEED_FLAGS) $(LIGHT_WARN_FLAGS) $^ -o $@
+
 ht_test: ht_test_normal ht_test_parallel
 
 ht_test_parallel: tests/hashtable_parallel.c lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -pthread -DHT_TEST_API -DHT_VALUE_TYPE="char*" $^ ../predis/lib/random_string.c -o $@
+
+getset_test: tests/getset_parallel.c
+	$(CC) $(ALL_FLAGS) -pthread -lhiredis $^ ../predis/lib/random_string.c -o $@
+
 
 ht_test_normal: tests/hashtable_serial.c lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -pthread -DHT_TEST_API -DHT_VALUE_TYPE="unsigned int" $^ -o $@
