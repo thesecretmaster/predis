@@ -18,8 +18,9 @@ struct resp_response_allocations {
 
 #include <sys/socket.h>
 #include <string.h>
+#include <assert.h>
 
-void print_raw(char *s) {
+static void print_raw(char *s) {
   while (*s != '\0') {
     if (*s == '\r')
       printf("\\r");
@@ -31,161 +32,520 @@ void print_raw(char *s) {
   }
   printf("\n");
 }
+
 #define BUFSIZE 48
 static const char bs_end[] = "\r\n";
-static const char *cmd_proc_net_err = "cmd_proc network error";
+// static const char *cmd_proc_net_err = "cmd_proc network error";
 
-// Todo: handle some errors (i.e. recv & malloc)
-// Todo: test with the fun printf | netcat test (for weird packet structure)
 struct resp_spare_page {
   char *page;
-  int size;
+  unsigned int size;
 };
 
-struct resp_spare_page *init_spare_page() {
+struct resp_allocations {
+  int allocation_count;
+  int allocation_array_size; /* DEPRECATED. DO NOT USE */
+  char **allocations;
+  char **argv;
+  int argc;
+};
+
+struct resp_allocations *resp_cmd_init() {
+  struct resp_allocations *allocs = malloc(sizeof(struct resp_allocations));
+  allocs->allocation_count = 0;
+  allocs->allocations = NULL;
+  allocs->argv = NULL;
+  allocs->argc = 0;
+  return allocs;
+}
+
+struct resp_spare_page *resp_cmd_init_spare_page() {
   struct resp_spare_page *page = malloc(sizeof(struct resp_spare_page));
   page->size = 0;
   page->page = NULL;
   return page;
 }
+// #include <pthread.h>
 
-int cmd_proc(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page) {
+// static pthread_mutex_t print_lock;
+
+static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, long *argc) {
+  char *buf_ptr;
+  ssize_t recv_val;
+  unsigned int copy_length;
+  *new_page = NULL;
+  *new_buf_ptr = NULL;
+  // printf("LENGHT PROC\n");
+  do {
+    buf_ptr = buf_ptr_orig;
+    *argc = strtol(buf_ptr, &buf_ptr, 10);
+    // printf("Got len %d\n", *argc);
+    // We should also handle the error case in which the length number is
+    // 123a12 (or some other invalid number)
+    if (
+      // the buffer couldn't hold an additional /r/n
+         buf_ptr + 2 > current_buffer + current_buffer_length
+      // there isn't a /r/n at the end
+      || memcmp(buf_ptr, bs_end, 2) != 0
+    ) {
+      // printf("loopi\n");
+      if (current_buffer_length < BUFSIZE) {
+        // printf("moar recv in loopi (cbl: %d)\n", current_buffer_length);
+        recv_val = recv(fd, current_buffer + current_buffer_length, (size_t)(BUFSIZE - current_buffer_length), 0x0);
+        if (recv_val <= 0)
+          return -1; // Network error
+        // printf("recv %d bytes\n", recv_val);
+        current_buffer_length += recv_val;
+      } else {
+        if (*new_page != NULL) {
+          // Array length number is too long to fit and we've already
+          // allocated a new page
+          return -2;
+        }
+        // printf("Fresh page in loopi\n");
+        // allocate a fresh page
+        assert((current_buffer + current_buffer_length) - buf_ptr_orig >= 0);
+        copy_length = (unsigned int)((current_buffer + current_buffer_length) - buf_ptr_orig);
+        *new_page = malloc(BUFSIZE + 1);
+        (*new_page)[BUFSIZE] = '\0';
+        memcpy(*new_page, buf_ptr_orig, copy_length);
+        recv_val = recv(fd, (*new_page) + copy_length, BUFSIZE - copy_length, 0x0);
+        if (recv_val <= 0)
+          return -2;
+        *new_page_length = (unsigned int)recv_val + copy_length;
+        buf_ptr = (*new_page);
+        buf_ptr_orig = buf_ptr;
+        current_buffer = *new_page;
+        current_buffer_length = *new_page_length;
+      }
+    } else {
+      break;
+    }
+  } while (true);
+  // if (*new_page != NULL)
+  *new_page_length = current_buffer_length;
+  *new_buf_ptr = buf_ptr;
+  return 0;
+}
+
+int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page) {
+  unsigned int copy_length;
+  // Setup first buffer or use spare page buffer
+  // Read "*<length>\r\n"
+  char *current_buffer;
+  unsigned int current_buffer_length;
+  ssize_t recv_val;
+  if (spare_page->page == NULL) {
+    current_buffer = malloc(BUFSIZE + 1);
+    current_buffer[BUFSIZE] = '\0';
+    recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+    if (recv_val <= 0)
+      return -1; // Network error
+    current_buffer_length = (unsigned int)recv_val;
+  } else {
+    // printf("READIN SPARE PAGE\n");
+    current_buffer = spare_page->page;
+    current_buffer_length = spare_page->size;
+  }
+  assert(current_buffer_length >= 1);
+  if (current_buffer[0] != '*') {
+    printf("'''not a array'''\n");
+    print_raw(current_buffer);
+    return -2; // Not a BS_ARRAY
+  }
+
+  long argc_raw;
+  unsigned int argc;
+  char *buf_ptr = current_buffer + 1;
+
+  // Get BS array length
+  // Note: Process length internal ensures that there's 2 bytes at the end
+  char *fresh_page;
+  char *fresh_page_ptr;
+  unsigned int fresh_page_length;
+  if (process_length_internal(fd, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &argc_raw) != 0)
+    return -3;
+  if (argc_raw <= 0) // TODO: We can't return 0 early, we need to handle all the spare page cleanup
+    return 0;
+  argc = (unsigned int)argc_raw;
+  // Save a malloc by allocating double the size for argv and using the second
+  // half for allocation_count
+  char **argv_allocations_allocation = malloc(sizeof(char*) * (argc * 2) + 2);
+  allocs->argv = argv_allocations_allocation;
+  allocs->allocations = (argv_allocations_allocation + argc);
+  allocs->allocations[0] = current_buffer;
+  allocs->allocation_count = 1;
+  allocs->argc = (int)argc_raw;
+  // Handle the loose allocation from process_length_internal on argc
+  buf_ptr = fresh_page_ptr;
+  current_buffer_length = fresh_page_length;
+  if (fresh_page != NULL) {
+    allocs->allocations[allocs->allocation_count] = fresh_page;
+    allocs->allocation_count += 1;
+    current_buffer = fresh_page;
+  }
+  buf_ptr += 2; // We know that the buffer can hold an additional /r/n so
+                // we can just eat them. It is guaranteed by process_length_internal
+  long bs_length_raw;
+  unsigned long bs_length;
+  // printf("Parsing command with %d args\n", argc);
+  for (unsigned int i = 0; i < argc; i++) {
+    // printf("STarting loooop\n");
+    if (buf_ptr >= current_buffer + current_buffer_length) {
+      if (current_buffer_length == BUFSIZE) {
+        // printf("C1\n");
+        // Since we know that buf_ptr is pointed at or past the end, we can
+        // assume that there's no data to copy -- all the data has been read.
+        current_buffer = malloc(BUFSIZE + 1);
+        current_buffer[BUFSIZE] = '\0';
+        allocs->allocations[allocs->allocation_count] = current_buffer;
+        allocs->allocation_count += 1;
+        buf_ptr = current_buffer;
+        recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+        if (recv_val <= 0)
+          return -4;
+        current_buffer_length = (unsigned int)recv_val;
+      } else {
+        // printf("C2\n");
+        recv_val = recv(fd, current_buffer + current_buffer_length, BUFSIZE - current_buffer_length, 0x0);
+        if (recv_val <= 0)
+          return -5;
+        current_buffer_length += recv_val;
+      }
+    }
+    // We know that we have at least one character in the buffer
+    // printf("Cureent buffer state: ");
+    // print_raw(buf_ptr);
+    if (buf_ptr[0] != '$')
+      return -6; // Expected a bulkstring and didn't get one
+    // Length reading loop
+    buf_ptr += 1; // Eat the '$'
+    if (process_length_internal(fd, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &bs_length_raw) != 0)
+      return -7;
+    assert(bs_length_raw >= 0); // Yeah, this is putting a problem off for later. I'll deal with it later.
+    bs_length = (unsigned long)bs_length_raw;
+    buf_ptr = fresh_page_ptr;
+    current_buffer_length = fresh_page_length;
+    if (fresh_page != NULL) {
+      allocs->allocations[allocs->allocation_count] = fresh_page;
+      allocs->allocation_count += 1;
+      current_buffer = fresh_page;
+    }
+
+    // printf("Cureeeent buffer state: ");
+    // print_raw(buf_ptr);
+
+    // printf("Processing argument %d: Length %d\n", i, bs_length);
+
+    buf_ptr += 2; // Handle '\r\n'. This is garenteed by process_length_internal
+
+    // Read "<str>\r\n"
+    if (buf_ptr + bs_length + 2 <= current_buffer + current_buffer_length/* there's space for (bs_length + 2) bytes after buf_ptr */) {
+      // printf("D1\n");
+      // The data fits in the buffer, and all that we need has already been recv'd
+      allocs->argv[i] = buf_ptr;
+      *(buf_ptr + bs_length) = '\0';
+      buf_ptr += bs_length + 2;
+    } else if (buf_ptr + bs_length + 2 < current_buffer + BUFSIZE) {
+      // printf("D2\n");
+      // The data fits in the buffer, but we need to recv the rest of it
+      // printf("D2 start val: ");
+      // print_raw(buf_ptr);
+      // printf("cbuflen: %d\n", current_buffer_length);
+      allocs->argv[i] = buf_ptr;
+      assert((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length) >= 0);
+      recv_val = recv(fd, current_buffer + current_buffer_length, (size_t)((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length)), MSG_WAITALL);
+      if (recv_val <= 0)
+        return -8;
+      current_buffer_length += recv_val;
+      *(buf_ptr + bs_length) = '\0';
+      buf_ptr += bs_length + 2;
+    } else if (bs_length + 2 < BUFSIZE){
+      // printf("D3\n");
+      // The data would fit into a fresh buffer, but doesn't fit into this one
+      assert((current_buffer + current_buffer_length) - buf_ptr >= 0);
+      copy_length = (unsigned int)((current_buffer + current_buffer_length) - buf_ptr);
+      current_buffer = malloc(BUFSIZE + 1);
+      current_buffer[BUFSIZE] = '\0';
+      allocs->allocations[allocs->allocation_count] = current_buffer;
+      allocs->allocation_count += 1;
+      memcpy(current_buffer, buf_ptr, copy_length);
+      assert((bs_length + 2) >= copy_length);
+      recv_val = recv(fd, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
+      if (recv_val <= 0)
+        return -9;
+      allocs->argv[i] = current_buffer;
+      current_buffer_length = copy_length + (unsigned int)recv_val;
+      *(current_buffer + bs_length) = '\0';
+      buf_ptr = current_buffer + bs_length + 2;
+    } else {
+      // printf("D4\n");
+      // The data does not fit into any sane buffer, use a bigbuf
+      assert((current_buffer + current_buffer_length) - buf_ptr >= 0);
+      copy_length = (unsigned int)((current_buffer + current_buffer_length) - buf_ptr);
+      current_buffer = malloc(bs_length + 2);
+      allocs->allocations[allocs->allocation_count] = current_buffer;
+      allocs->allocation_count += 1;
+      memcpy(current_buffer, buf_ptr, copy_length);
+      recv_val = recv(fd, current_buffer + copy_length, (bs_length + 2) - copy_length, MSG_WAITALL);
+      if (recv_val <= 0)
+        return -9;
+      *(current_buffer + bs_length) = '\0';
+      allocs->argv[i] = current_buffer;
+      // Prep for the next iteration
+      current_buffer = malloc(BUFSIZE + 1);
+      current_buffer[BUFSIZE] = '\0';
+      allocs->allocations[allocs->allocation_count] = current_buffer;
+      allocs->allocation_count += 1;
+      buf_ptr = current_buffer;
+      recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+      if (recv_val <= 0)
+        return -4;
+      current_buffer_length = (unsigned int)recv_val;
+    }
+    // printf("Got argument ");
+    // print_raw(allocs->argv[i]);
+  }
+  if (buf_ptr < current_buffer + current_buffer_length) {
+    spare_page->page = malloc(BUFSIZE + 1);
+    spare_page->page[BUFSIZE] = '\0';
+    assert((current_buffer + current_buffer_length) - buf_ptr > 0);
+    spare_page->size = (unsigned int)((current_buffer + current_buffer_length) - buf_ptr);
+    // printf("CREATING SPARE PAGE size = %d\n", spare_page->size);
+    memcpy(spare_page->page, buf_ptr, spare_page->size);
+    spare_page->page[spare_page->size] = '\0';
+    // print_raw(spare_page->page);
+  } else {
+    spare_page->page = NULL;
+    spare_page->size = 0;
+  }
+  // printf("Done!\n");
+  return 0;
+}
+
+#if 0
+int resp_cmd_process_depr(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page) {
   char *original_buffer;
   char *buf_ptr;
   char *spare_page_buf;
   char *nbuf_ptr;
-  int size;
+  bool bigbuf;
+  size_t size;
+  ssize_t recv_val;
+  printf("============= Starting Processing ==============\n");
   if (spare_page->page == NULL) {
+    printf("Allocating initial buffer\n");
     original_buffer = malloc(BUFSIZE + 2);
+    if (original_buffer == NULL)
+      return -1;
     buf_ptr = original_buffer;
-    size = recv(fd, buf_ptr, BUFSIZE, 0x0);
+    recv_val = recv(fd, buf_ptr, BUFSIZE, 0x0);
+    if (recv_val <= 0)
+      return -2; // Connection closed
+    size = (unsigned)recv_val;
+    printf("Original recv: ");
     buf_ptr[size] = '\0';
-    if (size <= 0) {
-      return -1; // Connection closed
-    }
+    print_raw(buf_ptr);
   } else {
     original_buffer = spare_page->page;
     buf_ptr = original_buffer;
     size = spare_page->size;
     buf_ptr[size] = '\0';
+    printf("Using spare page (size %d)\n", size);
   }
-  if (original_buffer[0] != '*') {
-    return -2; // Not a bulkstring array
+  if (buf_ptr[0] != '*') {
+    pthread_mutex_lock(&print_lock);
+    printf("Not an array??? %s %d\n", spare_page->page == NULL ? "null" : "not null", size);
+    print_raw(buf_ptr);
+    print_raw(original_buffer);
+    pthread_mutex_unlock(&print_lock);
+    return -6; // Not a bulkstring array
   }
+  spare_page->page = NULL;
+  spare_page->size = 0;
   buf_ptr += 1;
-  allocs->argc = strtol(buf_ptr, &buf_ptr, 10);
-  if (allocs->argc < 1) {
+  allocs->argc = (int)strtol(buf_ptr, &buf_ptr, 10);
+  if (allocs->argc < 1)
     return -3; // Command has no length
-  }
+  printf("There are going to be %d args\n", allocs->argc);
   buf_ptr += 2; // Eat \r\n
-  allocs->argv = malloc(sizeof(struct resp_response) * allocs->argc);
+  allocs->argv = malloc(sizeof(struct resp_response) * (unsigned)allocs->argc);
+  if (allocs->argv == NULL)
+    return -1;
   long bs_length;
   char *big_bs_allocation;
   allocs->allocation_array_size = allocs->argc + 1;
-  allocs->allocations = malloc(sizeof(char*) * allocs->allocation_array_size);
+  allocs->allocations = malloc(sizeof(char*) * (unsigned)allocs->allocation_array_size);
+  if (allocs->allocations == NULL)
+    return -1;
   int allocation_idx = 0;
   allocs->allocations[allocation_idx] = original_buffer;
   allocation_idx++;
-  int remaining_buffer_size;
+  unsigned long remaining_buffer_size;
   for (long i = 0; i < allocs->argc; i++) {
-    print_raw(buf_ptr);
-    if (*buf_ptr != '$') {
-      printf("Not a bulkstr, exiting\n");
-      return -5;
+    printf("Starting parse of arg %d\n", i);
+    if (i != 0 && buf_ptr >= original_buffer + BUFSIZE) {
+      printf("Allocating a new buffer because the pointer is at / past the end\n");
+      original_buffer = malloc(BUFSIZE + 10);
+      allocs->allocations[allocation_idx] = original_buffer;
+      allocation_idx++;
+      buf_ptr = original_buffer;
+      recv_val = recv(fd, original_buffer, BUFSIZE, 0x0);
+      if (recv_val <= 0)
+        return -2;
+      size = (unsigned)recv_val;
     }
+    if (*buf_ptr != '$')
+      return -5;
     buf_ptr++;
   retry:
-    printf("Loop iter %d\n", i);
-    remaining_buffer_size = size - (buf_ptr - original_buffer);
+    bigbuf = false;
+    remaining_buffer_size = BUFSIZE - (buf_ptr - original_buffer);
     // buf_ptr points to the start of the length
     bs_length = strtol(buf_ptr, &nbuf_ptr, 10);
-    printf("bs len: %ld\n", bs_length);
+    printf("%d: BS length %d\n", i, bs_length);
     // nbuf_ptr points to the \r\n after the length before the content
     if (memcmp(nbuf_ptr, bs_end, sizeof(bs_end) - 1) != 0) {
+      printf("%d: Length overlaps buffers\n", i);
       // The length overlaps past the end of the recv'd data.
       if (size < BUFSIZE) {
-        printf("RECV case 1\n");
+        printf("%d: More data\n", i);
         // Recv more content
-        size += recv(fd, buf_ptr, BUFSIZE - size, 0x0);
+        recv_val = recv(fd, original_buffer + size, BUFSIZE - (unsigned)size, 0x0);
+        if (recv_val <= 0)
+          return -2;
+        size += (unsigned)recv_val;
       } else {
-        printf("RECV case 2\n");
+        printf("%d: New buffer\n", i);
         // Allocate a new buffer
         nbuf_ptr = malloc(BUFSIZE + 1);
+        if (nbuf_ptr == NULL)
+          return -1;
         allocs->allocations[allocation_idx] = nbuf_ptr;
         allocation_idx++;
         // Copy the data from the old buffer to the new buffer
         memcpy(nbuf_ptr, buf_ptr, remaining_buffer_size);
-        print_raw(nbuf_ptr);
-        printf("rem buf size: %d\n", remaining_buffer_size);
         original_buffer = nbuf_ptr;
         buf_ptr = nbuf_ptr;
-        size = remaining_buffer_size + recv(fd, nbuf_ptr + remaining_buffer_size, BUFSIZE - remaining_buffer_size, 0x0);
-        print_raw(nbuf_ptr);
+        recv_val = recv(fd, nbuf_ptr + remaining_buffer_size, BUFSIZE - remaining_buffer_size, 0x0);
+        if (recv_val <= 0)
+          return -2;
+        size = remaining_buffer_size + (unsigned)recv_val;
       }
+      printf("%d: Retrying\n", i);
       // Restart the loop
-      printf("Continue\n");
       goto retry;
-      printf("Cry if you see this\n");
-      i--;
-      continue;
     }
     // Eat the /r/n after the bulkstring length;
     nbuf_ptr += 2;
-    printf("CHECKPINT 1\n");
+    remaining_buffer_size = size - (nbuf_ptr - original_buffer);
     // We have the bulkstring length, check if the bulkstring extends past the
     // available allocation
-    if (original_buffer + size < nbuf_ptr + bs_length) {
+    if (original_buffer + size < nbuf_ptr + bs_length + 2) {
+      printf("%d: BS isn't going to fit in current buffer\n", i);
       if (bs_length > BUFSIZE - 4) {
-        // We're gonna need a bit allocation, this won't fit on a normal page
-        remaining_buffer_size = size - (nbuf_ptr - original_buffer);
-        printf("C1 %d\n", remaining_buffer_size);
-        print_raw(buf_ptr);
+        printf("%d: Allocate special bigbuf\n", i);
+        bigbuf = true;
+        // We're gonna need a big allocation, this won't fit on a normal page
         // The content extends past the end of the buffer.
         // Allocate bs_length of space and memcpy -> recv WAIT_ALL into it
-        big_bs_allocation = malloc(sizeof(char) * bs_length);
+        big_bs_allocation = malloc(sizeof(char) * ((unsigned)bs_length + 2));
+        if (big_bs_allocation == NULL)
+          return -1;
         allocs->allocations[allocation_idx] = big_bs_allocation;
         allocation_idx++;
         memcpy(big_bs_allocation, nbuf_ptr, remaining_buffer_size);
-        recv(fd, big_bs_allocation + remaining_buffer_size, bs_length - remaining_buffer_size, MSG_WAITALL);
+        big_bs_allocation[bs_length] = '\0';
+        recv_val = recv(fd, big_bs_allocation + remaining_buffer_size, ((unsigned)bs_length + 2) - remaining_buffer_size, MSG_WAITALL);
+        if (recv_val <= 0)
+          return -2;
         allocs->argv[i] = big_bs_allocation;
         // Allocate a fresh buffer for future allocations
-        original_buffer = malloc(BUFSIZE + 1);
+        original_buffer = malloc(BUFSIZE + 2);
+        if (original_buffer == NULL)
+          return -1;
         allocs->allocations[allocation_idx] = original_buffer;
         allocation_idx++;
         buf_ptr = original_buffer;
-        size = recv(fd, buf_ptr, BUFSIZE, 0x0);
+        recv_val = recv(fd, buf_ptr, BUFSIZE, 0x0);
+        if (recv_val <= 0)
+          return -2;
+        size = (unsigned)recv_val;
+        printf("EC1\n");
       } else {
-        printf("C3\n");
+        printf("%d: Allocate new page\n", i);
+        printf("%d: Old page: ", i);
+        print_raw(nbuf_ptr);
         // We can just create a fresh page and use it
-        original_buffer = malloc(BUFSIZE + 1);
+        original_buffer = malloc(BUFSIZE + 10);
+        if (original_buffer == NULL)
+          return -1;
         allocs->allocations[allocation_idx] = original_buffer;
         allocation_idx++;
+        printf("%d: Copying %d bytes from nbuf to new buf: ", i, remaining_buffer_size);
+        print_raw(nbuf_ptr);
         memcpy(original_buffer, nbuf_ptr, remaining_buffer_size);
+        allocs->argv[i] = original_buffer;
         buf_ptr = original_buffer + remaining_buffer_size;
-        size += recv(fd, buf_ptr, BUFSIZE - remaining_buffer_size, 0x0);
+        size = 0;
+        do {
+          recv_val = recv(fd, buf_ptr + size, BUFSIZE - remaining_buffer_size, 0x0);
+          if (recv_val <= 0)
+            return -2;
+          printf("%d: Got %d bytes, might need more?\n", i, recv_val);
+          size += recv_val;
+        } while (size < (bs_length + 2) - remaining_buffer_size);
+        *(original_buffer + bs_length) = '\0';
+        size = (unsigned)recv_val + remaining_buffer_size;
+        if (i == allocs->argc - 1 && (recv_val + buf_ptr) - original_buffer > bs_length + 2 /* /r/n */) {
+          printf("%d: Use spb\n", i);
+          printf("%d: Current buffer contents: ", i);
+          print_raw(buf_ptr);
+          spare_page_buf = malloc(BUFSIZE + 1);
+          if (spare_page_buf == NULL)
+            return -1;
+          memmove(spare_page_buf, (recv_val + buf_ptr), ((recv_val + buf_ptr) - original_buffer) - (bs_length + 2));
+          spare_page->page = spare_page_buf;
+          spare_page->size = remaining_buffer_size;
+        }
+        buf_ptr = original_buffer + bs_length + 2;
+        printf("EC2\n");
       }
     } else {
-      printf("C2\n");
+      printf("%d: Do the normal thing\n", i);
       allocs->argv[i] = nbuf_ptr;
       buf_ptr = nbuf_ptr + bs_length + 2;
       *(nbuf_ptr + bs_length) = '\0';
+      printf("EC3 %p\n", spare_page->page);
+      if (i == allocs->argc - 1 && buf_ptr - original_buffer < size) {
+        printf("SP time %d\n", size);
+        spare_page_buf = malloc(BUFSIZE + 1);
+        if (spare_page_buf == NULL)
+          return -1;
+        memmove(spare_page_buf, buf_ptr, size - (buf_ptr - original_buffer));
+        spare_page->page = spare_page_buf;
+        spare_page->size = size - (buf_ptr - original_buffer);
+      }
     }
   }
-  remaining_buffer_size = size - (buf_ptr - original_buffer);
-  spare_page->page = NULL;
-  spare_page->size = 0;
-  if (remaining_buffer_size > 0) {
-    spare_page_buf = malloc(BUFSIZE + 1);
-    memmove(spare_page_buf, buf_ptr, remaining_buffer_size);
-    spare_page->page = spare_page_buf;
-    spare_page->size = remaining_buffer_size;
+  printf("Done! Got:");
+  for (int i = 0; i < allocs->argc; i++) {
+    printf(" %s", allocs->argv[i]);
   }
+  printf("\n");
   allocs->allocation_count = allocation_idx;
+  return 0;
+}
+#endif
+
+void resp_cmd_free(struct resp_allocations * const allocs) {
+  for (int i = 0; i < allocs->allocation_count - 1; i++)
+    free(allocs->allocations[i]);
 }
 
-void free_allocs(struct resp_allocations * const allocs) {
-  for (int i = 0; i < allocs->allocation_count; i++)
-    free(allocs->allocations[i]);
+void resp_cmd_args(struct resp_allocations * const allocs, int *argc, char ***argv) {
+  *argc = allocs->argc;
+  *argv = allocs->argv;
 }
 
 static const char *process_string_net_err = "process string network error";

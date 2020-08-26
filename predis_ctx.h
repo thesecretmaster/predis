@@ -1,5 +1,6 @@
 #include "lib/command_ht.h"
 #include <stdbool.h>
+#include "lib/1r1w_queue.h"
 
 #define PREDIS_CTX_CHAR_BUF_SIZE 512
 
@@ -8,6 +9,7 @@
 
 // Optmially packed already
 struct predis_ctx {
+  struct queue *sending_queue;
   struct command_ht *command_ht;
   char *reply_buf;
   int reply_fd;

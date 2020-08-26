@@ -312,7 +312,7 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, ht_value
     }
     new_node->contents.alloc_status = HT_FREE;
   }
-  new_node->key = key;
+  new_node->key = strdup(key);
   new_node->contents.value = value;
   new_node->key_hash = key_hash;
   new_node->next = n;

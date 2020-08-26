@@ -8,13 +8,13 @@ GPROF_FLAG = -pg
 CFLAGS = -fshort-enums # -Rpass='[^(licm|gvn)]' -Rpass-missed="inline"
 ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 
-all: testing commands/saysomething.so commands/string.so
+all: testing commands/saysomething.so commands/string.so commands/config.so
 
 # Command-shared.c shouldn't be in this list, it's just for temporaries
 testing: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c lib/1r1w_queue.c command-shared.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
 
-commands/%.so: commands/%.c command-shared.c lib/command_ht.c
+commands/%.so: commands/%.c command-shared.c lib/command_ht.c lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 strsearch: strsearch.c

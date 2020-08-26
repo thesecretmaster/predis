@@ -1,65 +1,94 @@
 #include <stdlib.h>
+#include <string.h>
 #include "1r1w_queue.h"
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <linux/futex.h>
+#include <sys/time.h>
+
+__attribute__((unused))
+static long
+futex(volatile int *uaddr, int futex_op, int val,
+     const struct timespec *timeout, int *uaddr2, int val3)
+{
+   return syscall(SYS_futex, uaddr, futex_op, val,
+                  timeout, uaddr2, val3);
+}
+
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpadded"
 
-struct queue_elem {
-  char **argv;
-  int argc;
-};
-
 
 struct queue {
-  struct queue_elem *elements;
-  int length;
-  volatile int tail;
-  volatile int head;
+  char *elements;
+  unsigned  length;
+  unsigned long elem_length;
+  volatile unsigned int tail;
+  volatile unsigned int head;
+  volatile bool closed;
 };
 
 #pragma GCC diagnostic pop
 
-struct queue *queue_init(int qlen) {
+struct queue *queue_init(unsigned int qlen, unsigned long elem_len) {
   struct queue *q = malloc(sizeof(struct queue));
   if (q == NULL)
     return NULL;
   q->length = qlen;
   q->tail = 0;
   q->head = 0;
-  q->elements = malloc(sizeof(struct queue_elem) * (unsigned long)qlen);
+  q->closed = false;
+  q->elem_length = elem_len;
+  q->elements = malloc(elem_len * (unsigned long)qlen);
   if (q->elements == NULL) {
     free(q);
     return NULL;
   }
-  for (int i = 0; i < qlen; i++) {
-    q->elements[i].argv = NULL;
-    q->elements[i].argc = -1;
-  }
+  memset(q->elements, 0x0, elem_len * (unsigned long)qlen);
   return q;
 }
 
-int queue_push(struct queue *q, char **argv, int argc) {
+void queue_close(struct queue *q) {
+  q->closed = true;
+}
+
+bool queue_closed(struct queue *q) {
+  return q->closed && (q->tail - q->head == 0);
+}
+
+int queue_push(struct queue *q, void *elem) {
   if (q->tail - q->head == q->length) {
     return -1;
   }
-  q->elements[q->tail % q->length].argv = argv;
-  q->elements[q->tail % q->length].argc = argc;
+  memcpy(q->elements + (q->elem_length * (q->tail % q->length)), elem, q->elem_length);
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
   q->tail += 1;
+  // futex(&q->tail, FUTEX_WAKE, 1, NULL, NULL, 0x0);
   return 0;
 }
-
-int queue_pop(struct queue *q, char ***argv, int *argc) {
-  if (q->tail - q->head == 0) {
-    return -1;
-  }
-  *argv = q->elements[q->head % q->length].argv;
-  *argc = q->elements[q->head % q->length].argc;
-  __atomic_thread_fence(__ATOMIC_SEQ_CST);
-  q->head += 1;
-  return 0;
+int queue_pop(struct queue *q, void *elem_targ) {
+  // struct timespec ts;
+  // ts.tv_sec = 1;
+  // ts.tv_nsec = 0;
+  // unsigned int iters = 0;
+  // retry: {
+    unsigned int tail = q->tail;
+    if (tail - q->head == 0) {
+      // futex(&q->tail, FUTEX_WAIT, q->head, NULL/* &ts */, NULL, 0x0);
+      // iters++;
+      // if (iters >= 100) {
+      //   goto retry;
+      // }
+      return -1;
+    }
+    memcpy(elem_targ, q->elements + (q->elem_length * (q->head % q->length)), q->elem_length);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    q->head += 1;
+    return 0;
+  // }
 }
 
-int queue_length(struct queue *q) {
+unsigned int queue_length(struct queue *q) {
   return q->length;
 }
