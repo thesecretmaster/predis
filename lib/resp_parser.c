@@ -33,20 +33,25 @@ static void print_raw(char *s) {
   printf("\n");
 }
 
-#define BUFSIZE 48
+#define BUFSIZE 256
 static const char bs_end[] = "\r\n";
 // static const char *cmd_proc_net_err = "cmd_proc network error";
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
 
 struct resp_spare_page {
   char *page;
   unsigned int size;
 };
 
+#pragma GCC diagnostic pop
+
 struct resp_allocations {
-  int allocation_count;
-  int allocation_array_size; /* DEPRECATED. DO NOT USE */
   char **allocations;
   char **argv;
+  unsigned long *argv_lengths;
+  int allocation_count;
   int argc;
 };
 
@@ -65,9 +70,6 @@ struct resp_spare_page *resp_cmd_init_spare_page() {
   page->page = NULL;
   return page;
 }
-// #include <pthread.h>
-
-// static pthread_mutex_t print_lock;
 
 static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, long *argc) {
   char *buf_ptr;
@@ -170,9 +172,14 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
   argc = (unsigned int)argc_raw;
   // Save a malloc by allocating double the size for argv and using the second
   // half for allocation_count
-  char **argv_allocations_allocation = malloc(sizeof(char*) * (argc * 2) + 2);
+  char **argv_allocations_allocation = malloc(
+    (sizeof(char*) * (argc + 1)) +
+    (sizeof(char*) * (argc + 1)) +
+    (sizeof(unsigned long) * (argc + 1))
+  );
   allocs->argv = argv_allocations_allocation;
-  allocs->allocations = (argv_allocations_allocation + argc);
+  allocs->allocations = (argv_allocations_allocation + argc + 1);
+  allocs->argv_lengths = (unsigned long*)(argv_allocations_allocation + ((argc + 1) * 2));
   allocs->allocations[0] = current_buffer;
   allocs->allocation_count = 1;
   allocs->argc = (int)argc_raw;
@@ -224,6 +231,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       return -7;
     assert(bs_length_raw >= 0); // Yeah, this is putting a problem off for later. I'll deal with it later.
     bs_length = (unsigned long)bs_length_raw;
+    allocs->argv_lengths[i] = bs_length;
     buf_ptr = fresh_page_ptr;
     current_buffer_length = fresh_page_length;
     if (fresh_page != NULL) {
@@ -543,9 +551,10 @@ void resp_cmd_free(struct resp_allocations * const allocs) {
     free(allocs->allocations[i]);
 }
 
-void resp_cmd_args(struct resp_allocations * const allocs, int *argc, char ***argv) {
+void resp_cmd_args(struct resp_allocations * const allocs, int *argc, char ***argv, unsigned long **argv_lengths) {
   *argc = allocs->argc;
   *argv = allocs->argv;
+  *argv_lengths = allocs->argv_lengths;
 }
 
 static const char *process_string_net_err = "process string network error";

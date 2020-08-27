@@ -8,8 +8,8 @@ struct predis_ctx;
 
 struct predis_data;
 
-typedef int (*command_preload_func)(command_bitmap bm, struct predis_data**cmd, char**argv, int argc);
-typedef int (*command_func)(struct predis_ctx *ctx, struct predis_data**cmd, char**argv, int argc);
+typedef int (*command_preload_func)(command_bitmap bm, struct predis_data**cmd, char**argv, unsigned long *argv_lengths, int argc);
+typedef int (*command_func)(struct predis_ctx *ctx, struct predis_data**cmd, char**argv, unsigned long *argv_lengths, int argc);
 
 struct command_ht;
 

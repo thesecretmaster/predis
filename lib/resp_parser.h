@@ -29,5 +29,5 @@ struct resp_spare_page *resp_cmd_init_spare_page(void);
 struct resp_allocations *resp_cmd_init(void);
 int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page);
 void resp_cmd_free(struct resp_allocations * const allocs);
-void resp_cmd_args(struct resp_allocations * const allocs, int*, char***);
+void resp_cmd_args(struct resp_allocations * const allocs, int*, char***, unsigned long **);
 #endif

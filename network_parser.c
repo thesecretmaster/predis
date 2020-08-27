@@ -32,7 +32,7 @@ struct conn_data {
 
 #pragma GCC diagnostic pop
 
-static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct predis_data **_data, char **argv, int argc) {
+static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct predis_data **_data, char **argv, __attribute__((unused)) unsigned long *argv_lengths, int argc) {
   printf("Starting load\n");
   if (argc != 1)
     return WRONG_ARG_COUNT;
@@ -71,6 +71,7 @@ static void *packet_processor(void *_cdata) {
   int cmd_status;
   int argc;
   char **argv;
+  unsigned long *argv_lengths;
   do {
     resp_allocs = resp_cmd_init();
     cmd_status = resp_cmd_process(cdata->fd, resp_allocs, resp_sp);
@@ -81,7 +82,7 @@ static void *packet_processor(void *_cdata) {
       printf("Protocol error: %d\n", cmd_status);
       break;
     }
-    resp_cmd_args(resp_allocs, &argc, &argv);
+    resp_cmd_args(resp_allocs, &argc, &argv, &argv_lengths);
     if (argc < 1) {
       printf("Command array too short (%d)\n", argc);
       continue;
@@ -98,7 +99,9 @@ static void *runner(void *_cdata) {
   struct queue *queue = cdata->processing_queue;
   struct ht_table *table = cdata->global_ht;
   char **argv;
+  unsigned long *argv_lengths;
   char **ptrs;
+  unsigned long *ptrs_lengths;
   int argc_raw = 0;
   unsigned long argc;
   command_func cmd;
@@ -127,7 +130,7 @@ static void *runner(void *_cdata) {
       }
     }
     // printf("Qpop\n");
-    resp_cmd_args(resp_allocs, &argc_raw, &argv);
+    resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
     argc = (unsigned long)argc_raw;
     ctx.needs_reply = true;
     error_happened = false;
@@ -139,6 +142,7 @@ static void *runner(void *_cdata) {
       printf("Command %s not found\n", cmd_name);
     } else {
       ptrs = argv + 1;
+      ptrs_lengths = argv_lengths + 1;
       argc -= 1;
       if (preload_is_func) {
         // bm = command_bitmap_init((unsigned long)argc);
@@ -163,10 +167,10 @@ static void *runner(void *_cdata) {
             case 'c': {
               // printf("Small c in %d %s\n", i, ptrs[i]);
               data[i] = malloc(sizeof(struct predis_data));
-              rval = ht_store(table, ptrs[i], data[i]);
+              rval = ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], data[i]);
               if (rval == HT_DUPLICATE_KEY) {
                 // free(data[i]);
-                ht_find(table, ptrs[i], &data[i]);
+                ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i]);
               } else if (rval != HT_GOOD) {
                 printf("SmolC\n");
                 error_happened = true;
@@ -175,7 +179,7 @@ static void *runner(void *_cdata) {
             }
             case 'R': {
               // printf("Big R in %d %s\n", i, ptrs[i]);
-              if ((ht_find_val = ht_find(table, ptrs[i], &data[i])) != HT_GOOD) {
+              if ((ht_find_val = ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i])) != HT_GOOD) {
                 // printf("dum %d\n", ht_find_val);
                 error_happened = true;
                 error_resolved = true;
@@ -203,7 +207,7 @@ static void *runner(void *_cdata) {
             replySimpleString(&ctx, "ERR other thingie");
           }
         } else {
-          cmd(&ctx, data, ptrs, (int)argc);
+          cmd(&ctx, data, ptrs, ptrs_lengths, (int)argc);
         }
         if (data != data_stack)
           free(data);
@@ -217,139 +221,7 @@ static void *runner(void *_cdata) {
   printf("Runner exiting\n");
   return NULL;
 }
-#if 0
-static void *connhandler(void *_cdata) {
-  struct conn_data *cdata = _cdata;
-  struct data_wrap *dw = dw_init(cdata->fd, 1024);
-  // struct data_wrap *dw = dw_init(cdata->fd, 14);
-  struct ht_table *table = cdata->global_ht;
-  int argc_raw;
-  command_func cmd;
-  union command_preload_strategies preload;
-  char *cmd_name;
-  bool preload_is_func;
-  unsigned long argc;
-  int rval;
-  bool error_happened;
-  char **ptrs;
-  char *ptrs_stack[10];
-  struct predis_data **data;
-  struct predis_data *data_stack[10];
-  char **argv;
-  char *argv_stack[argv_stack_length];
-  char *argv_stack_template[argv_stack_length];
-  struct pre_send_data *psd;
-  for (int i = 0; i < argv_stack_length; i++) {
-    argv_stack_template[i] = malloc(sizeof(char) * argv_stack_string_length);
-    if (argv_stack_template[i] == NULL) {
-      printf("Ugh malloc you dumb butt\n");
-      return NULL;
-    }
-  }
-  struct predis_ctx ctx;
-  ctx.command_ht = cdata->command_ht;
-  ctx.reply_fd = cdata->fd;
-  ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
-  do {
-    error_happened = false;
-    argv = argv_stack;
-    for (unsigned long i = 0; i < argv_stack_length; i++) {
-      argv_stack[i] = argv_stack_template[i];
-    }
-    argc_raw = resp_process_command(dw, &argv, sizeof(argv_stack), sizeof(argv_stack_template) / argv_stack_length);
-    if (argc_raw == -4) {
-      printf("Connection %d closed\n", cdata->fd);
-      break;
-    } else if (argc_raw < -1) {
-      printf("Protocol error: %d\n", argc_raw);
-      break;
-    } else if (argc_raw < 1) {
-      printf("Command array too short (%d)\n", argc_raw);
-      break;
-    }
-    ctx.needs_reply = true;
-    ctx.sending_queue = cdata->sending_queue;
-    assert(ctx.sending_queue != NULL);
-    cmd_name = argv[0];
-    if (cmd_name != NULL && argc_raw >= 1 && (cmd = command_ht_fetch_command(cdata->command_ht, cmd_name)) != NULL && (preload = command_ht_fetch_preload(cdata->command_ht, cmd_name, &preload_is_func)).ptr != NULL) {
-      argc = (unsigned long)(argc_raw - 1);
-      if (argc < sizeof(ptrs_stack)) {
-        ptrs = ptrs_stack;
-      } else {
-        ptrs = malloc(sizeof(char*) * argc);
-      }
-      for (unsigned long i = 0; i < argc; i++) {
-        ptrs[i] = argv[i + 1];
-      }
-      if (preload_is_func) {
-        // bm = command_bitmap_init((unsigned long)argc);
-        printf("Uhhh can't handle a preload func\n");
-      } else {
-        if (argc < sizeof(data_stack)) {
-          data = data_stack;
-        } else {
-          data = malloc(sizeof(struct predis_data*) * argc);
-        }
-        for (unsigned long i = 0; i < argc; i++) {
-          if (preload.format_string[i] == '\0') {
-            replySimpleString(&ctx, "ERR wrong number of args");
-            error_happened = true;
-            break;
-          }
-          switch(preload.format_string[i]) {
-             case 'c':
-                data[i] = malloc(sizeof(struct predis_data));
-                rval = ht_store(table, ptrs[i], data[i]);
-                if (rval == HT_DUPLICATE_KEY) {
-                  free(data[i]);
-                  ht_find(table, ptrs[i], &data[i]);
-                } else if (rval != HT_GOOD) {
-                  error_happened = true;
-                }
-                break;
-             case 'R':
-                if (ht_find(table, ptrs[i], &data[i]) != HT_GOOD)
-                  error_happened = true;
-                break;
-             case 's':
-                data[i] = NULL;
-                break;
-             default :
-                printf("Invalid format string");
-                error_happened = true;
-          }
-          if (error_happened)
-            break;
-        }
-        // Fetch data, run preload, schedule, enqueue
-        if (!error_happened) {
-          cmd(&ctx, data, ptrs, (int)argc);
-        } else {
-          replySimpleString(&ctx, "ERR other thingie");
-        }
-        if (data != data_stack)
-          free(data);
-      }
-      if (ptrs != ptrs_stack)
-        free(ptrs);
-    } else {
-      printf("A bad thing #2 :(\n");
-    }
-    if (argv != argv_stack) {
-      free(argv);
-      argv = argv_stack;
-    }
-    if (ctx.needs_reply) {
-      psd = malloc(sizeof(struct pre_send_data));
-      psd->length = sizeof(ok_msg) - 1;
-      psd->msg = ok_msg;
-      queue_push(ctx.sending_queue, psd);
-    }
-  } while (argc_raw >= -1);
-  close(cdata->fd);
-  return NULL;
-}
-#endif
+
 static void *sender(void *_obj) {
   struct conn_data *obj = _obj;
   struct queue *q = obj->sending_queue;
@@ -407,8 +279,8 @@ int main() {
   command_ht_store(command_ht, "load", &load_command, (const char *)"s", false);
   struct predis_ctx ctx;
   ctx.command_ht = command_ht;
-  load_command(&ctx, NULL, &((char*){"commands/string.so"}), 1);
-  load_command(&ctx, NULL, &((char*){"commands/config.so"}), 1);
+  load_command(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
+  load_command(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
   struct conn_data *obj;
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);

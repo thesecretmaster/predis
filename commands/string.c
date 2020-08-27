@@ -4,12 +4,13 @@
 #include "../commands.h"
 
 struct string {
+  unsigned int length;
   char *data;
 };
 
 static const char *type_name = "string";
 
-static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **argv, int argc) {
+static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **argv, unsigned long *argv_lengths, int argc) {
   if (argc != 2)
     return WRONG_ARG_COUNT;
 
@@ -18,7 +19,7 @@ static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **
   return PREDIS_SUCCESS;
 }
 
-static int string_get(struct predis_ctx *ctx, struct predis_data **data, char **argv, int argc) {
+static int string_get(struct predis_ctx *ctx, struct predis_data **data, char **argv, unsigned long *argv_lengths, int argc) {
   if (argc != 1)
     return WRONG_ARG_COUNT;
 

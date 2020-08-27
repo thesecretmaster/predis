@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <stdbool.h>
 #include <limits.h>
 #include <assert.h>
@@ -8,7 +7,9 @@
 #include <sys/sysinfo.h>
 #include "hashtable.h"
 
-static __thread unsigned long last_allocation_size = 0;
+#ifdef HT_TEST_API
+#include <stdio.h>
+#endif
 
 enum HT_ALLOC_STATUS {
   HT_FREE,
@@ -20,19 +21,19 @@ union ht_value_or_status {
   ht_value_type value;
 };
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpadded"
-
 // Could be backed better, depending on size of ht_value_type. Honestly
 // I'll just eat the 2 bytes per node cuz I don't want to worry about it.
 // (ht_value_type will usually be a pointer and therefore 4 bytes)
 struct ht_node {
   struct ht_node * volatile next;
   const char *key;
+  unsigned int key_length;
   unsigned int key_hash;
   union ht_value_or_status contents;
 };
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
 
 // Packed optimally
 struct ht_table {
@@ -45,6 +46,8 @@ struct ht_table {
 #pragma GCC diagnostic pop
 
 #ifdef HT_TEST_API
+
+static __thread unsigned long last_allocation_size = 0;
 
 unsigned long ht_last_allocation_size() {
   return last_allocation_size;
@@ -133,10 +136,11 @@ struct ht_table *ht_init() {
 #ifndef HT_TEST_API
 static
 #endif
-unsigned int ht_hash(const char *str) {
+unsigned int ht_hash(const char *str, const unsigned int key_length) {
   unsigned int hash = 5381;
   char c;
-  while ((c = *str++)) {
+  for (unsigned int i = 0; i < key_length; i++) {
+    c = *str++;
     hash = ((hash << 5) + hash) + (unsigned int)c; /* hash * 33 + c */
   }
   return hash;
@@ -209,10 +213,12 @@ static inline struct ht_node *ht_get_sentinel(struct ht_table *table, unsigned i
       (*new_node)->contents.alloc_status = HT_REALLOC;
     }
     if (nnode == NULL) {
+      #ifdef HT_TEST_API
       if (errno != ENOMEM) {
         printf("uhhhhhhh wtf 3\n");
       }
       last_allocation_size = sizeof(struct ht_node);
+      #endif
       return NULL;
     }
     nnode->key = NULL;
@@ -257,11 +263,13 @@ static int ht_resize(struct ht_table *table) {
     bucket_size = (unsigned long)0x1 << (bitlen - 1);
     new_buckets = malloc(sizeof(struct ht_node*) * bucket_size);
     if (new_buckets == NULL) {
+      #ifdef HT_TEST_API
       if (errno != ENOMEM) {
         printf("uhhhhhhh wtf\n");
       }
       printf("Lalloc size: %lu\n", bucket_size);
       last_allocation_size = sizeof(struct ht_node*) * bucket_size;
+      #endif
       return -1;
     }
     sbitlen = bitlen - 1;
@@ -272,17 +280,19 @@ static int ht_resize(struct ht_table *table) {
   do {
     old_bitlen = bitlen - 1;
   } while (!__atomic_compare_exchange_n(&table->bitlen, &old_bitlen, bitlen, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+  #ifdef HT_TEST_API
   printf("Current size: %lu\n", bucket_size);
+  #endif
   return 0;
 }
 
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, ht_value_type value) {
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type value) {
   if (table->element_count > (0x1 << table->bitlen)) {
     if (ht_resize(table) != 0) {
       return HT_OOM;
     }
   }
-  unsigned int key_hash = ht_hash(key);
+  unsigned int key_hash = ht_hash(key, key_length);
   assert(key_hash != 0);
   struct ht_node *new_node = NULL;
   struct ht_node *op = ht_get_sentinel(table, key_hash, true, &new_node);
@@ -296,7 +306,7 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, ht_value
     n = __atomic_load_n(&n->next, __ATOMIC_SEQ_CST);
   }
   while (n->key_hash == key_hash) {
-    if (n->key != NULL && strcmp(key, n->key) == 0) {
+    if (n->key != NULL && key_length == n->key_length && memcmp(key, n->key, key_length) == 0) {
       return HT_DUPLICATE_KEY;
     }
     p = n;
@@ -305,14 +315,19 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, ht_value
   if (new_node == NULL) {
     new_node = malloc(sizeof(struct ht_node));
     if (new_node == NULL) {
+      #ifdef HT_TEST_API
       if (errno != ENOMEM)
-      printf("uhhhhhhh wtf 2\n");
+        printf("uhhhhhhh wtf 2\n");
       last_allocation_size = sizeof(struct ht_node);
+      #endif
       return HT_OOM;
     }
     new_node->contents.alloc_status = HT_FREE;
   }
-  new_node->key = strdup(key);
+  char *key_copy = malloc(sizeof(char) * key_length);
+  memcpy(key_copy, key, key_length);
+  new_node->key = key_copy;
+  new_node->key_length = key_length;
   new_node->contents.value = value;
   new_node->key_hash = key_hash;
   new_node->next = n;
@@ -326,8 +341,8 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, ht_value
   return HT_GOOD;
 }
 
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, ht_value_type *value) {
-  unsigned int key_hash = ht_hash(key);
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type *value) {
+  unsigned int key_hash = ht_hash(key, key_length);
   struct ht_node *p = ht_get_sentinel(table, key_hash, false, NULL);
   struct ht_node *n = p->next;
   while (key_hash > n->key_hash) {
@@ -336,7 +351,7 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, ht_value_
     assert(n->key_hash >= p->key_hash);
   }
   while (n->key_hash == key_hash) {
-    if (n->key != NULL && strcmp(key, n->key) == 0) {
+    if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
       *value = n->contents.value;
       return HT_GOOD;
     }
