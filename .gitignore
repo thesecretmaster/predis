@@ -4,3 +4,4 @@ gmon.out
 *.profdata
 *.profraw
 vgcore.*
+bin/*
