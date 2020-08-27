@@ -183,7 +183,7 @@ static void *runner(void *_cdata) {
                 // printf("dum %d\n", ht_find_val);
                 error_happened = true;
                 error_resolved = true;
-                replyBulkString(&ctx, NULL);
+                replyBulkString(&ctx, NULL, -1);
               }
               break;
             }

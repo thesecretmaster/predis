@@ -14,7 +14,10 @@ static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **
   if (argc != 2)
     return WRONG_ARG_COUNT;
 
-  __atomic_store_n(&data[0]->data, argv[1], __ATOMIC_SEQ_CST);
+  struct string *str = malloc(sizeof(struct string));
+  str->data = argv[1];
+  str->length = argv_lengths[1];
+  __atomic_store_n(&data[0]->data, str, __ATOMIC_SEQ_CST);
   __atomic_store_n(&data[0]->data_type, type_name, __ATOMIC_SEQ_CST);
   return PREDIS_SUCCESS;
 }
@@ -23,10 +26,11 @@ static int string_get(struct predis_ctx *ctx, struct predis_data **data, char **
   if (argc != 1)
     return WRONG_ARG_COUNT;
 
-  if (strcmp(data[0]->data_type, "string") != 0)
+  if (strcmp(data[0]->data_type, type_name) != 0)
     return INVALID_TYPE;
 
-  replySimpleString(ctx, __atomic_load_n(&data[0]->data, __ATOMIC_SEQ_CST));
+  struct string *str = __atomic_load_n(&data[0]->data, __ATOMIC_SEQ_CST);
+  replyBulkString(ctx, str->data, str->length);
   return PREDIS_SUCCESS;
 }
 

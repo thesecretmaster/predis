@@ -24,4 +24,4 @@ struct pre_send_data {
 int register_command(struct predis_ctx *ht, const char *command_name, command_func command, const char *data_str);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);
 int predis_init(void *magic_obj);
-int replyBulkString(struct predis_ctx *ctx, const char *ss);
+int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);

@@ -8,7 +8,7 @@ GPROF_FLAG = -pg
 CFLAGS = -fshort-enums # -Rpass='[^(licm|gvn)]' -Rpass-missed="inline"
 ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 
-all: bin/server commands/saysomething.so commands/string.so commands/config.so
+all: bin/server commands/saysomething.so commands/string.so commands/config.so bin/getset_test
 
 # Command-shared.c shouldn't be in this list, it's just for temporaries
 bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c lib/1r1w_queue.c command-shared.c

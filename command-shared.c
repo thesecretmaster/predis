@@ -47,7 +47,7 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
 
 static const char nil_bs[] = "$-1\r\n";
 
-int replyBulkString(struct predis_ctx *ctx, const char *ss) {
+int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len) {
   if (!ctx->needs_reply)
     return 1;
   ctx->needs_reply = false;
@@ -59,7 +59,6 @@ int replyBulkString(struct predis_ctx *ctx, const char *ss) {
     queue_push(ctx->sending_queue, psd);
     return 0;
   }
-  unsigned long ss_len = strlen(ss);
   int bufsize = snprintf(NULL, 0, "$%lu\r\n%s\r\n", ss_len, ss);
   if (bufsize < 0)
     return -1;
