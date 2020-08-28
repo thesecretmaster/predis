@@ -20,8 +20,8 @@ c = write, non-existance mandatory
 s = string
 i = int
 */
-int register_command(struct predis_ctx *ctx, const char *command_name, command_func command, const char *format) {
-  command_ht_store(ctx->command_ht, command_name, command, format, false);
+int register_command(struct predis_ctx *ctx, const char *command_name, const unsigned int command_name_length, command_func command, const char *format) {
+  command_ht_store(ctx->command_ht, command_name, command_name_length, command, format, false);
   printf("Stored command %s\n", command_name);
   return 0;
 }

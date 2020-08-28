@@ -106,7 +106,6 @@ static void *runner(void *_cdata) {
   unsigned long argc;
   command_func cmd;
   union command_preload_strategies preload;
-  char *cmd_name;
   bool preload_is_func;
   int rval;
   unsigned long other_i;
@@ -135,11 +134,10 @@ static void *runner(void *_cdata) {
     ctx.needs_reply = true;
     error_happened = false;
     error_resolved = false;
-    cmd_name = argv[0];
-    if (cmd_name == NULL) {
+    if (argv[0] == NULL) {
       printf("Argument error\n");
-    } else if ((cmd = command_ht_fetch_command(cdata->command_ht, cmd_name)) == NULL || (preload = command_ht_fetch_preload(cdata->command_ht, cmd_name, &preload_is_func)).ptr == NULL) {
-      printf("Command %s not found\n", cmd_name);
+    } else if ((cmd = command_ht_fetch_command(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0])) == NULL || (preload = command_ht_fetch_preload(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0], &preload_is_func)).ptr == NULL) {
+      printf("Command %.*s not found\n", (int)argv_lengths[0], argv[0]);
     } else {
       ptrs = argv + 1;
       ptrs_lengths = argv_lengths + 1;
@@ -180,7 +178,6 @@ static void *runner(void *_cdata) {
             case 'R': {
               // printf("Big R in %d %s\n", i, ptrs[i]);
               if ((ht_find_val = ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i])) != HT_GOOD) {
-                // printf("dum %d\n", ht_find_val);
                 error_happened = true;
                 error_resolved = true;
                 replyBulkString(&ctx, NULL, -1);
@@ -207,7 +204,12 @@ static void *runner(void *_cdata) {
             replySimpleString(&ctx, "ERR other thingie");
           }
         } else {
-          cmd(&ctx, data, ptrs, ptrs_lengths, (int)argc);
+          switch(cmd(&ctx, data, ptrs, ptrs_lengths, (int)argc)) {
+            case WRONG_ARG_COUNT: {
+              replySimpleString(&ctx, "ERR wrong arg count");
+              break;
+            }
+          }
         }
         if (data != data_stack)
           free(data);
@@ -240,6 +242,8 @@ static void sigint_handler(__attribute__((unused)) int i) {
   printf("Exiting!\n");
   exit(0);
 }
+
+static const char load_cmd_name[] = "load";
 
 int main() {
   signal(SIGINT, &sigint_handler);
@@ -276,7 +280,7 @@ int main() {
   pthread_t pid;
   struct ht_table *global_ht = ht_init();
   struct command_ht *command_ht = command_ht_init(256);
-  command_ht_store(command_ht, "load", &load_command, (const char *)"s", false);
+  command_ht_store(command_ht, load_cmd_name, sizeof(load_cmd_name), &load_command, (const char *)"s", false);
   struct predis_ctx ctx;
   ctx.command_ht = command_ht;
   load_command(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);

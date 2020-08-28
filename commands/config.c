@@ -20,6 +20,6 @@ static int print1cmd(struct predis_ctx *ctx, struct predis_data **_data, char **
 static const char cmd_name[] = "CONFIG";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, cmd_name, &print1cmd, "ss");
+  register_command(magic_obj, cmd_name, sizeof(cmd_name), &print1cmd, "ss");
   return 0;
 }

@@ -34,9 +34,36 @@ static int string_get(struct predis_ctx *ctx, struct predis_data **data, char **
   return PREDIS_SUCCESS;
 }
 
+static int string_bitcount(struct predis_ctx *ctx, struct predis_data **data, char **argv, unsigned long *argv_lengths, int argc) {
+  if (argc != 1 && argc != 3)
+    return WRONG_ARG_COUNT;
+  struct string *str = __atomic_load_n(&data[0]->data, __ATOMIC_SEQ_CST);
+  long start = 0;
+  long end = str->length;
+  if (argc == 3) {
+    start = strtol(argv[1], NULL, 10);
+    end = strtol(argv[2], NULL, 10);
+    if (start < 0) { start = str->length + start + 1; }
+    if (end < 0) { end = str->length + end + 1; }
+    if (start < 0 || end < 0 || start > str->length || end > str->length || start > end) {
+      replySimpleString(ctx, "0");
+      return 0;
+    }
+  }
+  unsigned int set_bits = 0;
+  for (long i = start; i < end; i++) {
+    set_bits += (unsigned int)__builtin_popcount((unsigned int)str->data[i]);
+  }
+  int output_strlen = snprintf(NULL, 0, "%u", set_bits);
+  char *output = malloc(sizeof(char) * ((unsigned long)output_strlen + 1));
+  snprintf(output, (unsigned long)output_strlen + 1, "%u", set_bits);
+  replySimpleString(ctx, output);
+  return PREDIS_SUCCESS;
+}
+
 static const char sset[] = "SET";
 static const char sget[] = "GET";
-
+static const char sbitcount[] = "BITCOUNT";
 
 /*
 a|foobar|b foobar is looped
@@ -47,8 +74,9 @@ R = read, existance mandatory
 c = write, non-existance mandatory
 */
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, sset, &string_set, "cs");
-  register_command(magic_obj, sget, &string_get, "R");
+  register_command(magic_obj, sset, sizeof(sset), &string_set, "cs");
+  register_command(magic_obj, sget, sizeof(sget), &string_get, "R");
+  register_command(magic_obj, sbitcount, sizeof(sbitcount), &string_bitcount, "Rcc");
   return 0;
 }
 
