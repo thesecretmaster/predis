@@ -8,7 +8,13 @@ GPROF_FLAG = -pg
 CFLAGS = -fshort-enums # -Rpass='[^(licm|gvn)]' -Rpass-missed="inline"
 ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 
-all: bin/server commands/saysomething.so commands/string.so commands/config.so bin/getset_test
+all: bin/server commands/saysomething.so commands/string.so commands/config.so commands/hash.so bin/getset_test
+
+lib/command_ht.c: lib/command_type_ht.c lib/command_ht.h
+	cp $< $@
+
+lib/command_ht.h: lib/command_type_ht.h
+	cp $< $@
 
 # Command-shared.c shouldn't be in this list, it's just for temporaries
 bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c lib/hashtable.c lib/1r1w_queue.c command-shared.c
@@ -16,6 +22,9 @@ bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c lib/command_ht.c li
 
 commands/%.so: commands/%.c command-shared.c lib/command_ht.c lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
+
+tmp/hashtable.%.o: lib/hashtable.c
+	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="$*" -c $^ -o $@
 
 strsearch: strsearch.c
 	$(CC) $(DEBUG_FLAGS) $(SPEED_FLAGS) -Wall $^ -o $@
@@ -41,4 +50,4 @@ ht_test_normal: tests/hashtable_serial.c lib/hashtable.c
 $PHONY: clean ht_test
 
 clean:
-	rm bin/* commands/*.so
+	rm bin/* commands/*.so lib/command_ht.{c,h}

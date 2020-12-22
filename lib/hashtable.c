@@ -360,3 +360,35 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const uns
   }
   return HT_NOT_FOUND;
 }
+
+enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type *value) {
+  unsigned int key_hash = ht_hash(key, key_length);
+  struct ht_node *sentinel = ht_get_sentinel(table, key_hash, false, NULL);
+  struct ht_node *p = sentinel;
+  struct ht_node *n = p->next;
+  retry:
+  while (key_hash > n->key_hash) {
+    p = n;
+    n = __atomic_load_n(&n->next, __ATOMIC_SEQ_CST);
+    assert(n->key_hash >= p->key_hash);
+  }
+  while (n->key_hash == key_hash) {
+    if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
+      if (__atomic_compare_exchange_n(&(p->next), &n, n->next, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        *value = n->contents.value;
+        // TODO: We can't actually free the node because something else might need it
+        // Really we need to add it to the GC list
+        // free(n->key);
+        // free(n);
+        return HT_GOOD;
+      } else {
+        p = sentinel;
+        n = p->next;
+        goto retry;
+      }
+    }
+    p = n;
+    n = __atomic_load_n(&n->next, __ATOMIC_SEQ_CST);
+  }
+  return HT_NOT_FOUND;
+}

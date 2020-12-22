@@ -67,7 +67,6 @@ static int string_bitcount(struct predis_ctx *ctx, struct predis_data **data, ch
 static const char sset[] = "SET";
 static const char sget[] = "GET";
 static const char sbitcount[] = "BITCOUNT";
-static const char type_string[] = "string";
 
 /*
 a|foobar|b foobar is looped
@@ -77,29 +76,10 @@ r = read, existance optional
 R = read, existance mandatory
 c = write, non-existance mandatory
 */
-
-int string_init(void **ds) {
-  struct string *s = malloc(sizeof(struct string));
-  if (s == NULL)
-    return -1;
-  s->length = -1;
-  s->data = NULL;
-  *ds = s;
-  return 0;
-}
-
-int string_free(void *ds) {
-  struct string *s = ds;
-  free(s->data);
-  free(s);
-  return 0;
-}
-
 int predis_init(void *magic_obj) {
-  register_type(magic_obj, type_string, sizeof(type_string), &string_init, &string_free);
-  register_command(magic_obj, sset, sizeof(sset), &string_set, "C{string}s");
-  register_command(magic_obj, sget, sizeof(sget), &string_get, "R{string}");
-  register_command(magic_obj, sbitcount, sizeof(sbitcount), &string_bitcount, "R{string}ii");
+  register_command(magic_obj, sset, sizeof(sset), &string_set, "cs");
+  register_command(magic_obj, sget, sizeof(sget), &string_get, "R");
+  register_command(magic_obj, sbitcount, sizeof(sbitcount), &string_bitcount, "Rcc");
   return 0;
 }
 

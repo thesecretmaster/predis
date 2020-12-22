@@ -56,6 +56,65 @@ hash(const unsigned char *str)
     return hash;
 }
 
+enum format_string_access_type {
+  FSTRING_READONLY,
+  FSTRING_MODIFY_NOCREATE,
+  FSTRING_MODIFY_CREATE,
+  FSTRING_CREATE_MODIFY,
+  FSTRING_STRING
+};
+
+struct format_string_ll {
+  enum format_string_access_type access_type;
+  int types_list_length;
+  void **types_list;
+  struct format_string_ll *next;
+};
+
+static int parse_format_string(const char *str, const int len) {
+  int stridx = 0;
+  struct format_string_ll *head = NULL;
+  struct format_string_ll *fstring_node;
+  void *typeargs_end;
+  while (stridx < len) {
+    fstring_node = malloc(sizeof(struct format_string_ll))
+    switch (str[stridx]) {
+      case 'R' : {
+        fstring_node->access_type = FSTRING_READONLY;
+        stridx += 1;
+        break;
+      }
+      case 'C' : {
+        fstring_node->access_type = FSTRING_CREATE;
+        stridx += 1;
+        break;
+      }
+      case 'W' : {
+        fstring_node->access_type = FSTRING_MODIFY_CREATE;
+        stridx += 1;
+        break;
+      }
+      case 'M' : {
+        fstring_node->access_type = FSTRING_MODIFY_NOCREATE;
+        stridx += 1;
+        break;
+      }
+      case 'S' : {
+        fstring_node->access_type = FSTRING_STRING;
+        stridx += 1;
+        break;
+      }
+      default : {
+        return -1;
+      }
+    }
+    if (str[stridx] != '{')
+      return -2;
+    stridx += 1;
+    typeargs_end = memchr(str + stridx, '}', len - stridx);
+  }
+}
+
 int command_ht_store(struct command_ht *ht, const char *command_name, const unsigned int command_name_length, command_func command, union command_preload_strategies preload, bool preload_func) {
   unsigned int base_index = hash((const unsigned char*)command_name) % ht->size;
   unsigned int index = base_index;

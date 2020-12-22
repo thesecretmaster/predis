@@ -14,6 +14,7 @@ enum RESP_TYPE {
   PROCESSING_ERROR = '!'
 };
 
+typedef long bulkstring_size_t;
 
 int resp_process_packet(struct data_wrap *dw, struct resp_response*);
 void resp_print(struct resp_response *r);
@@ -29,5 +30,5 @@ struct resp_spare_page *resp_cmd_init_spare_page(void);
 struct resp_allocations *resp_cmd_init(void);
 int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page);
 void resp_cmd_free(struct resp_allocations * const allocs);
-void resp_cmd_args(struct resp_allocations * const allocs, int*, char***, unsigned long **);
-#endif
+void resp_cmd_args(struct resp_allocations * const allocs, long*, char***, bulkstring_size_t **);
+#endif // RESP_PARSER_H

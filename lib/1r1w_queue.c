@@ -24,8 +24,8 @@ struct queue {
   char *elements;
   unsigned  length;
   unsigned long elem_length;
+  __attribute__((aligned(8))) volatile unsigned int head;
   volatile unsigned int tail;
-  volatile unsigned int head;
   volatile bool closed;
 };
 
@@ -92,3 +92,23 @@ int queue_pop(struct queue *q, void *elem_targ) {
 unsigned int queue_length(struct queue *q) {
   return q->length;
 }
+#include <stdio.h>
+#include <stdint.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+unsigned int queue_size(struct queue *q) {
+  uint64_t qsize;
+  uint64_t *qsize_ptr = &qsize;
+  unsigned int head;
+  unsigned int tail;
+  if (sizeof(q->tail) * 2 == sizeof(uint64_t)) {
+    __atomic_load((volatile uint64_t*)&(q->head), qsize_ptr, __ATOMIC_SEQ_CST);
+    head = *((unsigned int*)qsize_ptr);
+    tail = *(((unsigned int*)qsize_ptr) + 1);
+    return tail - head;
+  } else {
+    printf("size %lu\n", sizeof(q->tail));
+  }
+  return q->tail - q->head;
+}
+#pragma GCC diagnostic pop

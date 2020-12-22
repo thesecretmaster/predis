@@ -1,4 +1,3 @@
-// typedef int ht_value_type;
 struct ht_table;
 struct ht_table *ht_init(void);
 
@@ -9,10 +8,7 @@ enum HT_RETURN_STATUS {
   HT_NOT_FOUND = 3
 };
 
-#ifndef HT_VALUE_TYPE
-#error "No ht_value_type specified when compiling hashtable"
-#endif
-typedef HT_VALUE_TYPE ht_value_type;
+typedef void* ht_value_type;
 
 enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type value);
 enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type *value);

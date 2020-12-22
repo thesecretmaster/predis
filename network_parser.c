@@ -32,7 +32,7 @@ struct conn_data {
 
 #pragma GCC diagnostic pop
 
-static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct predis_data **_data, char **argv, __attribute__((unused)) unsigned long *argv_lengths, int argc) {
+static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct predis_data **_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
   printf("Starting load\n");
   if (argc != 1)
     return WRONG_ARG_COUNT;
@@ -69,9 +69,9 @@ static void *packet_processor(void *_cdata) {
   struct resp_allocations *resp_allocs;
   struct resp_spare_page *resp_sp = resp_cmd_init_spare_page();
   int cmd_status;
-  int argc;
+  long argc;
   char **argv;
-  unsigned long *argv_lengths;
+  bulkstring_size_t *argv_lengths;
   do {
     resp_allocs = resp_cmd_init();
     cmd_status = resp_cmd_process(cdata->fd, resp_allocs, resp_sp);
@@ -84,7 +84,7 @@ static void *packet_processor(void *_cdata) {
     }
     resp_cmd_args(resp_allocs, &argc, &argv, &argv_lengths);
     if (argc < 1) {
-      printf("Command array too short (%d)\n", argc);
+      printf("Command array too short (%ld)\n", argc);
       continue;
     }
     while (queue_push(queue, &resp_allocs) != 0) {}
@@ -99,10 +99,10 @@ static void *runner(void *_cdata) {
   struct queue *queue = cdata->processing_queue;
   struct ht_table *table = cdata->global_ht;
   char **argv;
-  unsigned long *argv_lengths;
+  bulkstring_size_t *argv_lengths;
   char **ptrs;
-  unsigned long *ptrs_lengths;
-  int argc_raw = 0;
+  bulkstring_size_t *ptrs_lengths;
+  long argc_raw = 0;
   unsigned long argc;
   command_func cmd;
   union command_preload_strategies preload;
@@ -139,6 +139,7 @@ static void *runner(void *_cdata) {
     } else if ((cmd = command_ht_fetch_command(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0])) == NULL || (preload = command_ht_fetch_preload(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0], &preload_is_func)).ptr == NULL) {
       printf("Command %.*s not found\n", (int)argv_lengths[0], argv[0]);
     } else {
+      printf("Running command %s\n", argv[0]);
       ptrs = argv + 1;
       ptrs_lengths = argv_lengths + 1;
       argc -= 1;
@@ -168,7 +169,7 @@ static void *runner(void *_cdata) {
               rval = ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], data[i]);
               if (rval == HT_DUPLICATE_KEY) {
                 // free(data[i]);
-                ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i]);
+                ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i]);
               } else if (rval != HT_GOOD) {
                 printf("SmolC\n");
                 error_happened = true;
@@ -177,8 +178,9 @@ static void *runner(void *_cdata) {
             }
             case 'R': {
               // printf("Big R in %d %s\n", i, ptrs[i]);
-              if ((ht_find_val = ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i])) != HT_GOOD) {
+              if ((ht_find_val = ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i])) != HT_GOOD) {
                 error_happened = true;
+                printf("Error time\n");
                 error_resolved = true;
                 replyBulkString(&ctx, NULL, -1);
               }
@@ -236,6 +238,23 @@ static void *sender(void *_obj) {
   printf("Sender exiting\n");
   return NULL;
 }
+
+#include <sys/ioctl.h>
+static void *qchecker(void *_q) {
+  struct conn_data *q = _q;
+  struct timespec sleeplen;
+  sleeplen.tv_sec = 0;
+  sleeplen.tv_nsec = 10000000;
+  int count;
+  while (true) {
+    nanosleep(&sleeplen, NULL);
+    ioctl(q->fd, FIONREAD, &count);
+    if (queue_closed(q->processing_queue))
+      break;
+    printf("Queue size: %u\nData on fd: %d\n", queue_size(q->processing_queue), count);
+  }
+  return NULL;
+}
 #include <signal.h>
 static void sigint_handler(int i) __attribute__((noreturn));
 static void sigint_handler(__attribute__((unused)) int i) {
@@ -285,6 +304,7 @@ int main() {
   ctx.command_ht = command_ht;
   load_command(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
   load_command(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
+  load_command(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
   struct conn_data *obj;
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);
@@ -302,5 +322,6 @@ int main() {
     pthread_create(&pid, NULL, packet_processor, obj);
     pthread_create(&pid, NULL, runner, obj);
     pthread_create(&pid, NULL, sender, obj);
+    // pthread_create(&pid, NULL, qchecker, obj);
   }
 }
