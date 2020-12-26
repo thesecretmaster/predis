@@ -2,15 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../commands.h"
-
-struct string {
-  long length;
-  char *data;
-};
+#include "../types/string.h"
 
 static const char *type_name = "string";
 
-static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **argv, argv_length_t *argv_lengths, int argc) {
+// Thought processes: Hashtable holds a CONSTANT pointer (data[i])
+// data[i] needs to be a (struct string**) because we can't change it
+
+static int string_set(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 2)
     return WRONG_ARG_COUNT;
 
@@ -20,27 +19,24 @@ static int string_set(struct predis_ctx *ctx, struct predis_data **data, char **
   struct string *str = malloc(sizeof(struct string));
   str->data = argv[1];
   str->length = argv_lengths[1];
-  __atomic_store_n(&data[0]->data, str, __ATOMIC_SEQ_CST);
-  __atomic_store_n(&data[0]->data_type, type_name, __ATOMIC_SEQ_CST);
+  printf("Using argv %.*s\n", argv_lengths[0], argv[0]);
+  __atomic_store_n((struct string **)data[0], str, __ATOMIC_SEQ_CST);
   return PREDIS_SUCCESS;
 }
 
-static int string_get(struct predis_ctx *ctx, struct predis_data **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int string_get(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1)
     return WRONG_ARG_COUNT;
 
-  if (strcmp(data[0]->data_type, type_name) != 0)
-    return INVALID_TYPE;
-
-  struct string *str = __atomic_load_n(&data[0]->data, __ATOMIC_SEQ_CST);
+  struct string *str = __atomic_load_n((struct string**)data[0], __ATOMIC_SEQ_CST);
   replyBulkString(ctx, str->data, str->length);
   return PREDIS_SUCCESS;
 }
 
-static int string_bitcount(struct predis_ctx *ctx, struct predis_data **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int string_bitcount(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1 && argc != 3)
     return WRONG_ARG_COUNT;
-  struct string *str = __atomic_load_n(&data[0]->data, __ATOMIC_SEQ_CST);
+  struct string *str = __atomic_load_n((struct string **)data[0], __ATOMIC_SEQ_CST);
   long start = 0;
   long end = str->length;
   if (argc == 3) {
@@ -65,9 +61,11 @@ static int string_bitcount(struct predis_ctx *ctx, struct predis_data **data, ch
 }
 
 static const char sset[] = "SET";
+static const char sset_format[] = "W{string}S";
 static const char sget[] = "GET";
+static const char sget_format[] = "R{string}";
 static const char sbitcount[] = "BITCOUNT";
-static const char type_string[] = "string";
+static const char sbitcount_format[] = "R{string}ii";
 
 /*
 a|foobar|b foobar is looped
@@ -78,28 +76,10 @@ R = read, existance mandatory
 c = write, non-existance mandatory
 */
 
-int string_init(void **ds) {
-  struct string *s = malloc(sizeof(struct string));
-  if (s == NULL)
-    return -1;
-  s->length = -1;
-  s->data = NULL;
-  *ds = s;
-  return 0;
-}
-
-int string_free(void *ds) {
-  struct string *s = ds;
-  free(s->data);
-  free(s);
-  return 0;
-}
-
 int predis_init(void *magic_obj) {
-  register_type(magic_obj, type_string, sizeof(type_string), &string_init, &string_free);
-  register_command(magic_obj, sset, sizeof(sset), &string_set, "C{string}s");
-  register_command(magic_obj, sget, sizeof(sget), &string_get, "R{string}");
-  register_command(magic_obj, sbitcount, sizeof(sbitcount), &string_bitcount, "R{string}ii");
+  register_command(magic_obj, sset, sizeof(sset), &string_set, sset_format, sizeof(sset_format) - 1);
+  register_command(magic_obj, sget, sizeof(sget), &string_get, sget_format, sizeof(sget_format) - 1);
+  register_command(magic_obj, sbitcount, sizeof(sbitcount), &string_bitcount, sbitcount_format, sizeof(sbitcount_format) - 1);
   return 0;
 }
 

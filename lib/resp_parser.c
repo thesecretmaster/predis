@@ -45,15 +45,15 @@ struct resp_spare_page {
   unsigned int size;
 };
 
-#pragma GCC diagnostic pop
-
 struct resp_allocations {
   char **allocations;
   char **argv;
   bulkstring_size_t *argv_lengths;
-  int allocation_count;
   long argc;
+  int allocation_count;
 };
+
+#pragma GCC diagnostic pop
 
 struct resp_allocations *resp_cmd_init() {
   struct resp_allocations *allocs = malloc(sizeof(struct resp_allocations));

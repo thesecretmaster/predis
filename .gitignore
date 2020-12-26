@@ -5,3 +5,5 @@ gmon.out
 *.profraw
 vgcore.*
 bin/*
+tmp/*
+types/*.so

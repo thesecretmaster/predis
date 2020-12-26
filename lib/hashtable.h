@@ -1,3 +1,5 @@
+#include "type_ht.h"
+
 struct ht_table;
 struct ht_table *ht_init(void);
 
@@ -5,13 +7,12 @@ enum HT_RETURN_STATUS {
   HT_GOOD = 0,
   HT_OOM = 1,
   HT_DUPLICATE_KEY = 2,
-  HT_NOT_FOUND = 3
+  HT_NOT_FOUND = 3,
+  HT_WRONGTYPE = 4
 };
 
-typedef void* ht_value_type;
-
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type value);
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, ht_value_type *value);
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void *value, struct type_ht_raw*);
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value, struct type_ht_raw*);
 
 #ifdef HT_TEST_API
 struct ht_node;

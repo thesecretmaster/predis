@@ -3,7 +3,7 @@
 #include <string.h>
 #include "../commands.h"
 
-static int print1cmd(struct predis_ctx *ctx, struct predis_data **_data, char **argv, argv_length_t *argv_lengths, int _argc) {
+static int print1cmd(struct predis_ctx *ctx, void **_data, char **argv, argv_length_t *argv_lengths, int _argc) {
   if (strcmp(argv[0], "SET") == 0) {
     for (int i = 0; i < _argc; i++)
       printf("%s ", argv[i]);
@@ -18,8 +18,9 @@ static int print1cmd(struct predis_ctx *ctx, struct predis_data **_data, char **
 // }
 
 static const char cmd_name[] = "CONFIG";
+static const char cmd_format[] = "SS";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, cmd_name, sizeof(cmd_name), &print1cmd, "ss");
+  register_command(magic_obj, cmd_name, sizeof(cmd_name), &print1cmd, cmd_format, sizeof(cmd_format) - 1);
   return 0;
 }

@@ -15,10 +15,7 @@ enum command_errors {
 };
 
 struct predis_ctx;
-struct predis_data {
-  const char *data_type;
-  void *data;
-};
+
 struct pre_send_data {
   size_t length;
   const char *msg;
@@ -26,13 +23,12 @@ struct pre_send_data {
 
 typedef long argv_length_t;
 // typedef int (*command_preload_func)(command_bitmap bm, struct predis_data**cmd, char**argv, argv_length_t *argv_lengths, int argc);
-typedef int (*command_func)(struct predis_ctx *ctx, struct predis_data**cmd, char**argv, argv_length_t *argv_lengths, int argc);
 #include "lib/command_ht.h"
+#include "lib/type_ht.h"
 
-int register_command(struct predis_ctx *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *data_str);
-// int register_type(struct predis_ctx *ht, const char *type_name, const unsigned int type_name_length, command_func command, const char *data_str);
-int replySimpleString(struct predis_ctx *ctx, const char *ss);
+int register_command(struct predis_ctx *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *data_str, const unsigned int);
+int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int type_name_length, type_init_func tinit, type_free_func tfree);
 int predis_init(void *magic_obj);
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
-
+int replySimpleString(struct predis_ctx *ctx, const char *ss);
 #endif

@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include "lib/resp_parser.h"
 #include "lib/command_ht.h"
+#include "lib/type_ht.h"
 #include "commands.h"
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
@@ -25,6 +26,7 @@ struct conn_data {
   struct queue *processing_queue;
   struct queue *sending_queue;
   struct command_ht *command_ht;
+  struct type_ht *type_ht;
   struct ht_table *global_ht;
   int fd;
   int nonblock_fd;
@@ -32,7 +34,7 @@ struct conn_data {
 
 #pragma GCC diagnostic pop
 
-static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct predis_data **_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
+static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) void **_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
   printf("Starting load\n");
   if (argc != 1)
     return WRONG_ARG_COUNT;
@@ -48,6 +50,7 @@ static int load_command(struct predis_ctx *ctx, __attribute__((unused)) struct p
   predis_init_func ifunc = (predis_init_func)dlsym(dl_handle, "predis_init");
   struct predis_ctx *sctx = malloc(sizeof(struct predis_ctx));
   sctx->command_ht = ctx->command_ht;
+  sctx->type_ht = ctx->type_ht;
   sctx->reply_fd = -1;
   sctx->needs_reply = false;
 
@@ -105,16 +108,14 @@ static void *runner(void *_cdata) {
   long argc_raw = 0;
   unsigned long argc;
   command_func cmd;
-  union command_preload_strategies preload;
-  bool preload_is_func;
-  int rval;
+  struct format_string *fstring;
   unsigned long other_i;
   bool error_happened;
   bool error_resolved;
-  int ht_find_val;
+  int command_ht_rval;
   struct predis_ctx ctx;
-  struct predis_data **data;
-  struct predis_data *data_stack[10];
+  void **data;
+  void *data_stack[10];
   struct resp_allocations *resp_allocs;
   ctx.command_ht = cdata->command_ht;
   ctx.reply_fd = cdata->nonblock_fd;
@@ -136,73 +137,104 @@ static void *runner(void *_cdata) {
     error_resolved = false;
     if (argv[0] == NULL) {
       printf("Argument error\n");
-    } else if ((cmd = command_ht_fetch_command(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0])) == NULL || (preload = command_ht_fetch_preload(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0], &preload_is_func)).ptr == NULL) {
-      printf("Command %.*s not found\n", (int)argv_lengths[0], argv[0]);
-    } else {
-      printf("Running command %s\n", argv[0]);
-      ptrs = argv + 1;
-      ptrs_lengths = argv_lengths + 1;
-      argc -= 1;
-      if (preload_is_func) {
-        // bm = command_bitmap_init((unsigned long)argc);
-        printf("Uhhh can't handle a preload func\n");
+    } else if ((command_ht_rval = command_ht_fetch(cdata->command_ht, argv[0], (unsigned int)argv_lengths[0], &fstring, &cmd)) == 0) {
+      if (fstring->length + 1 != argc) {
+        printf("Length wrong! Fstring: %u / Argc: %lu\n", fstring->length, argc);
+        error_happened = true;
       } else {
+        // printf("Running command %s\n", argv[0]);
+        ptrs = argv + 1;
+        ptrs_lengths = argv_lengths + 1;
+        argc -= 1;
         if (argc < sizeof(data_stack)) {
           data = data_stack;
         } else {
-          data = malloc(sizeof(struct predis_data*) * argc);
+          data = malloc(sizeof(void*) * argc);
         }
         other_i = 0;
         for (unsigned long i = 0; i < argc; i++) {
           other_i = i;
           // printf("Command %s -- Arg[%d] = %c, %s\n", cmd_name, i, preload.format_string[i], ptrs[i]);
-          if (preload.format_string[i] == '\0') {
-            printf("Bad fstring\n");
-            replySimpleString(&ctx, "ERR wrong number of args");
-            error_happened = true;
-            break;
-          }
-          switch(preload.format_string[i]) {
-            case 'c': {
+          switch(fstring->contents[i].access_type) {
+            case FSTRING_MODIFY_CREATE: {
               // printf("Small c in %d %s\n", i, ptrs[i]);
-              data[i] = malloc(sizeof(struct predis_data));
-              rval = ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], data[i]);
-              if (rval == HT_DUPLICATE_KEY) {
-                // free(data[i]);
-                ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i]);
-              } else if (rval != HT_GOOD) {
-                printf("SmolC\n");
+              if (fstring->contents[i].type->init(&data[i]) == 0) {
+                switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], data[i], fstring->contents[i].type)) {
+                  case HT_DUPLICATE_KEY: {
+                    // free(data[i]);
+                    ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i], fstring->contents[i].type);
+                    break;
+                  }
+                  case HT_WRONGTYPE: {
+                    printf("Wrong type in MODIFY_CREATE op\n");
+                    error_happened = true;
+                    break;
+                  }
+                  case HT_OOM:
+                  case HT_NOT_FOUND: {
+                    printf("Weird error in MODIFY_CREATE\n");
+                    error_happened = true;
+                    break;
+                  }
+                  case HT_GOOD: {
+                    break;
+                  }
+                }
+              } else {
+                printf("Initialization failed for type in MODIFY_CREATE op\n");
                 error_happened = true;
               }
               break;
             }
-            case 'R': {
+            case FSTRING_READONLY: {
               // printf("Big R in %d %s\n", i, ptrs[i]);
-              if ((ht_find_val = ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i])) != HT_GOOD) {
-                error_happened = true;
-                printf("Error time\n");
+              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i], fstring->contents[i].type)) {
+                case HT_WRONGTYPE: {
+                  printf("Wrong type in READONLY op\n");
+                  error_happened = true;
+                  break;
+                }
+                case HT_NOT_FOUND: {
+                  // printf("Not found in READONLY\n");
+                  error_happened = true;
+                  break;
+                }
+                case HT_DUPLICATE_KEY:
+                case HT_OOM: {
+                  printf("Weird error in READONLY\n");
+                  error_happened = true;
+                  break;
+                }
+                case HT_GOOD: {
+                  break;
+                }
+              }
+              if (error_happened) {
                 error_resolved = true;
                 replyBulkString(&ctx, NULL, -1);
               }
               break;
             }
-            case 's': {
+            case FSTRING_STRING: {
               // printf("Small s in %d\n", i);
               data[i] = NULL;
               break;
             }
-            default : {
-              printf("Invalid format string");
+            case FSTRING_CREATE:
+            case FSTRING_MODIFY_NOCREATE: {
+              printf("Can't handle this command yet\n");
               error_happened = true;
+              data[i] = NULL;
+              break;
             }
           }
           if (error_happened)
             break;
         }
-        // Fetch data, run preload, schedule, enqueue
+        // Fetch data, run preload, schedule, enqueue <- wow so out of date
         if (error_happened) {
           if (!error_resolved) {
-            printf("ERR OTHER THINGIE %c\n", preload.format_string[other_i]);
+            printf("ERR OTHER THINGIE\n");
             replySimpleString(&ctx, "ERR other thingie");
           }
         } else {
@@ -216,6 +248,8 @@ static void *runner(void *_cdata) {
         if (data != data_stack)
           free(data);
       }
+    } else {
+      printf("Command %.*s not found (1 = notfound, %d)\n", (int)argv_lengths[0], argv[0], command_ht_rval);
     }
     if (ctx.needs_reply)
       replySimpleString(&ctx, "OK");
@@ -239,22 +273,22 @@ static void *sender(void *_obj) {
   return NULL;
 }
 
-#include <sys/ioctl.h>
-static void *qchecker(void *_q) {
-  struct conn_data *q = _q;
-  struct timespec sleeplen;
-  sleeplen.tv_sec = 0;
-  sleeplen.tv_nsec = 10000000;
-  int count;
-  while (true) {
-    nanosleep(&sleeplen, NULL);
-    ioctl(q->fd, FIONREAD, &count);
-    if (queue_closed(q->processing_queue))
-      break;
-    printf("Queue size: %u\nData on fd: %d\n", queue_size(q->processing_queue), count);
-  }
-  return NULL;
-}
+// #include <sys/ioctl.h>
+// static void *qchecker(void *_q) {
+//   struct conn_data *q = _q;
+//   struct timespec sleeplen;
+//   sleeplen.tv_sec = 0;
+//   sleeplen.tv_nsec = 10000000;
+//   int count;
+//   while (true) {
+//     nanosleep(&sleeplen, NULL);
+//     ioctl(q->fd, FIONREAD, &count);
+//     if (queue_closed(q->processing_queue))
+//       break;
+//     printf("Queue size: %u\nData on fd: %d\n", queue_size(q->processing_queue), count);
+//   }
+//   return NULL;
+// }
 #include <signal.h>
 static void sigint_handler(int i) __attribute__((noreturn));
 static void sigint_handler(__attribute__((unused)) int i) {
@@ -298,13 +332,17 @@ int main() {
   socklen_t addr_size = sizeof(their_addr);
   pthread_t pid;
   struct ht_table *global_ht = ht_init();
-  struct command_ht *command_ht = command_ht_init(256);
-  command_ht_store(command_ht, load_cmd_name, sizeof(load_cmd_name), &load_command, (const char *)"s", false);
+  struct type_ht *type_ht = type_ht_init(256);
+  struct command_ht *command_ht = command_ht_init(256, type_ht);
+  const char load_cmd_fstring[] = "S";
+  command_ht_store(command_ht, load_cmd_name, sizeof(load_cmd_name), &load_structures, load_cmd_fstring, sizeof(load_cmd_fstring) - 1);
   struct predis_ctx ctx;
   ctx.command_ht = command_ht;
-  load_command(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
-  load_command(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
-  load_command(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
+  ctx.type_ht = type_ht;
+  load_structures(&ctx, NULL, &((char*){"types/string.so"}), NULL, 1);
+  load_structures(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
+  load_structures(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
+  // load_structures(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
   struct conn_data *obj;
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);
@@ -319,6 +357,7 @@ int main() {
     obj->sending_queue = queue_init(50, sizeof(struct pre_send_data));
     assert(obj->sending_queue != NULL);
     obj->command_ht = command_ht;
+    obj->type_ht = type_ht;
     pthread_create(&pid, NULL, packet_processor, obj);
     pthread_create(&pid, NULL, runner, obj);
     pthread_create(&pid, NULL, sender, obj);

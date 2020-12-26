@@ -1,4 +1,8 @@
-#include "lib/command_ht.h"
+#ifndef H_PREDIS_CTX
+#define H_PREDIS_CTX
+
+// #include "lib/command_ht.h"
+// #include "lib/type_ht.h"
 #include <stdbool.h>
 #include "lib/1r1w_queue.h"
 
@@ -11,9 +15,12 @@
 struct predis_ctx {
   struct queue *sending_queue;
   struct command_ht *command_ht;
+  struct type_ht *type_ht;
   char *reply_buf;
   int reply_fd;
   bool needs_reply;
 };
 
 #pragma GCC diagnostic pop
+
+#endif

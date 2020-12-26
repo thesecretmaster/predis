@@ -19,6 +19,6 @@ static int hash_hset(struct predis_ctx *ctx, struct predis_data **_data, char **
 static const char hhset[] = "hset";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, hhset, sizeof(hhset), &hash_hset, "Rcc");
+  register_command(magic_obj, hhset, sizeof(hhset), &hash_hset, "Rcc", 3);
   return 0;
 }

@@ -1,4 +1,5 @@
 #include "lib/command_ht.h"
+#include "lib/type_ht.h"
 #include "commands.h"
 #include "predis_ctx.h"
 #include <sys/socket.h>
@@ -20,9 +21,16 @@ c = write, non-existance mandatory
 s = string
 i = int
 */
-int register_command(struct predis_ctx *ctx, const char *command_name, const unsigned int command_name_length, command_func command, const char *format) {
-  command_ht_store(ctx->command_ht, command_name, command_name_length, command, format, false);
-  printf("Stored command %s\n", command_name);
+int register_command(struct predis_ctx *ctx, const char *command_name, const unsigned int command_name_length, command_func command, const char *format, const unsigned int format_length) {
+  int r = command_ht_store(ctx->command_ht, command_name, command_name_length, command, format, format_length);
+  printf("Stored command %.*s (%d)\n", command_name_length, command_name, r);
+  return 0;
+}
+
+int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int type_name_length, type_init_func tinit, type_free_func tfree) {
+  printf("Storing type %.*s\n", type_name_length, type_name);
+  int r = type_ht_store(ctx->type_ht, type_name, type_name_length, &((struct type_ht_raw){tinit, tfree}));
+  printf("Stored type %.*s (%d)\n", type_name_length, type_name, r);
   return 0;
 }
 
