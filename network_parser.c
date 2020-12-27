@@ -17,6 +17,7 @@
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
+#include "lib/timer.h"
 #include <assert.h>
 
 #pragma GCC diagnostic push
@@ -68,6 +69,8 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) void 
 
 static void *packet_processor(void *_cdata) {
   struct conn_data *cdata = _cdata;
+  struct timer *timer = timer_init(cdata->fd, THREAD_RECIEVER);
+  struct timer_interval *tint;
   struct queue *queue = cdata->processing_queue;
   struct resp_allocations *resp_allocs;
   struct resp_spare_page *resp_sp = resp_cmd_init_spare_page();
@@ -75,22 +78,30 @@ static void *packet_processor(void *_cdata) {
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
+  unsigned int tag;
   do {
-    resp_allocs = resp_cmd_init();
+    tint = timer_start(timer, INTERVAL_RUNNING, (tag = rand()));
+    resp_allocs = resp_cmd_init(tag);
     cmd_status = resp_cmd_process(cdata->fd, resp_allocs, resp_sp);
     if (cmd_status == -2) {
       printf("Connection %d closed\n", cdata->fd);
+      timer_stop(tint);
       break;
     } else if (cmd_status != 0) {
       printf("Protocol error: %d\n", cmd_status);
+      timer_stop(tint);
       break;
     }
     resp_cmd_args(resp_allocs, &argc, &argv, &argv_lengths);
     if (argc < 1) {
       printf("Command array too short (%ld)\n", argc);
+      timer_stop(tint);
       continue;
     }
+    timer_stop(tint);
+    tint = timer_start(timer, INTERVAL_QUEUE, 0);
     while (queue_push(queue, &resp_allocs) != 0) {}
+    timer_stop(tint);
   } while (true);
   queue_close(queue);
   printf("Recver exiting\n");
@@ -99,6 +110,8 @@ static void *packet_processor(void *_cdata) {
 
 static void *runner(void *_cdata) {
   struct conn_data *cdata = _cdata;
+  struct timer *timer = timer_init(cdata->fd, THREAD_RUNNER);
+  struct timer_interval *tint;
   struct queue *queue = cdata->processing_queue;
   struct ht_table *table = cdata->global_ht;
   char **argv;
@@ -122,6 +135,7 @@ static void *runner(void *_cdata) {
   ctx.sending_queue = cdata->sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
   do {
+    tint = timer_start(timer, INTERVAL_QUEUE, 0);
     if (queue_pop(queue, (void*)&resp_allocs) != 0) {
       if (queue_closed(queue)) {
         break;
@@ -129,6 +143,8 @@ static void *runner(void *_cdata) {
         continue;
       }
     }
+    timer_stop(tint);
+    tint = timer_start(timer, INTERVAL_RUNNING, resp_get_tag(resp_allocs));
     // printf("Qpop\n");
     resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
     argc = (unsigned long)argc_raw;
@@ -254,6 +270,7 @@ static void *runner(void *_cdata) {
     if (ctx.needs_reply)
       replySimpleString(&ctx, "OK");
     resp_cmd_free(resp_allocs);
+    timer_stop(tint);
   } while (argc_raw >= 0);
   queue_close(cdata->sending_queue);
   printf("Runner exiting\n");
@@ -262,14 +279,21 @@ static void *runner(void *_cdata) {
 
 static void *sender(void *_obj) {
   struct conn_data *obj = _obj;
+  struct timer *timer = timer_init(obj->fd, THREAD_SENDER);
+  struct timer_interval *tint;
   struct queue *q = obj->sending_queue;
   struct pre_send_data data;
   while (!queue_closed(q)) {
+    tint = timer_start(timer, INTERVAL_QUEUE, 0);
     if (queue_pop(q, (void*)&data) == 0) {
+      timer_stop(tint);
+      tint = timer_start(timer, INTERVAL_RUNNING, 1);
       send(obj->fd, data.msg, data.length, MSG_NOSIGNAL);
+      timer_stop(tint);
     }
   }
   printf("Sender exiting\n");
+  timer_print();
   return NULL;
 }
 

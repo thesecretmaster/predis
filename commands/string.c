@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../commands.h"
@@ -19,7 +18,7 @@ static int string_set(struct predis_ctx *ctx, void **data, char **argv, argv_len
   struct string *str = malloc(sizeof(struct string));
   str->data = argv[1];
   str->length = argv_lengths[1];
-  printf("Using argv %.*s\n", argv_lengths[0], argv[0]);
+  // printf("Using argv %.*s\n", argv_lengths[0], argv[0]);
   __atomic_store_n((struct string **)data[0], str, __ATOMIC_SEQ_CST);
   return PREDIS_SUCCESS;
 }

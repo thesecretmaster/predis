@@ -51,17 +51,23 @@ struct resp_allocations {
   bulkstring_size_t *argv_lengths;
   long argc;
   int allocation_count;
+  unsigned int tag;
 };
 
 #pragma GCC diagnostic pop
 
-struct resp_allocations *resp_cmd_init() {
+struct resp_allocations *resp_cmd_init(unsigned int tag) {
   struct resp_allocations *allocs = malloc(sizeof(struct resp_allocations));
   allocs->allocation_count = 0;
   allocs->allocations = NULL;
   allocs->argv = NULL;
   allocs->argc = 0;
+  allocs->tag = tag;
   return allocs;
+}
+
+unsigned int resp_get_tag(struct resp_allocations *allocs) {
+  return allocs->tag;
 }
 
 struct resp_spare_page *resp_cmd_init_spare_page() {
