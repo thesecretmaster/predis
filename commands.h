@@ -31,4 +31,5 @@ int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int ty
 int predis_init(void *magic_obj);
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);
+int replyInt(struct predis_ctx *ctx, const int i);
 #endif

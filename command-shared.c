@@ -53,6 +53,13 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
   return 0;
 }
 
+int replyInt(struct predis_ctx *ctx, const int i) {
+  int length = snprintf( NULL, 0, "%d", i );
+  char* str = malloc( length + 1 );
+  snprintf( str, length + 1, "%d", i );
+  return replySimpleString(ctx, str);
+}
+
 static const char nil_bs[] = "$-1\r\n";
 
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len) {
