@@ -34,6 +34,8 @@ static int command_get(struct predis_ctx *ctx, void **data, char **argv, argv_le
  * 'count' bytes. The implementation of this function is required to
  * work with an input string length up to 512 MB or more (server.proto_max_bulk_len) */
 #include <stdint.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
 static size_t redisPopcount(void *s, long count) {
     size_t bits = 0;
     unsigned char *p = s;
@@ -87,6 +89,7 @@ static size_t redisPopcount(void *s, long count) {
     while(count--) bits += bitsinbyte[*p++];
     return bits;
 }
+#pragma GCC diagnostic pop
 
 static int command_bitcount(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1 && argc != 3)
@@ -121,6 +124,8 @@ static int command_bitcount(struct predis_ctx *ctx, void **data, char **argv, ar
 
 // Stolen directly from redis: https://github.com/redis/redis/blob/90b9f08e5d1657e7bfffe43f31f6663bf469ee75/src/bitops.c#L94-L186
 #include <limits.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
 /* Return the position of the first bit set to one (if 'bit' is 1) or
  * zero (if 'bit' is 0) in the bitmap starting at 's' and long 'count' bytes.
  *
@@ -214,12 +219,13 @@ static long redisBitpos(void *s, unsigned long count, int bit) {
     printf("End of redisBitpos() reached.\n");
     return 0; /* Just to avoid warnings. */
 }
+#pragma GCC diagnostic pop
 
 static int command_bitpos(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
   long length;
   string_get(data[0], &str, &length);
-  long bp = redisBitpos(str, (unsigned long)length, (int)strtol(str, (char **)NULL, 10));
+  long bp = redisBitpos(str, (unsigned long)length, (int)strtol(argv[1], NULL, 10));
   replyInt(ctx, (int)bp);
   return PREDIS_SUCCESS;
 }
@@ -238,6 +244,14 @@ static int command_getset(struct predis_ctx *ctx, void **data, char **argv, argv
   return PREDIS_SUCCESS;
 }
 
+static int command_strlen(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+  char *str;
+  long length;
+  string_get(data[0], &str, &length);
+  replyInt(ctx, length);
+  return 0;
+}
+
 static const char sset[] = "SET";
 static const char sset_format[] = "W{string}S";
 static const char sget[] = "GET";
@@ -248,6 +262,43 @@ static const char sbitcount[] = "BITCOUNT";
 static const char sbitcount_format[] = "R{string}";
 static const char sbitpos[] = "BITPOS";
 static const char sbitpos_format[] = "R{string}S";
+static const char sstrlen[] = "STRLEN";
+static const char sstrlen_format[] = "R{string}";
+static const char smget[] = "MGET";
+static const char smget_format[] = "S|r{string}|S";
+
+static int command_mget(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+  printf("MGET called\n");
+  for (int i = 1; i < argc - 1; i++) {
+    printf("Mget field: %.*s\n", argv_lengths[i], argv[i]);
+  }
+  printf("First: %.*s\nLast: %.*s\n", argv_lengths[0], argv[0], argv_lengths[argc - 1], argv[argc - 1]);
+  return PREDIS_SUCCESS;
+}
+
+/*
+TODO:
+
+append
+bitfield
+bitop
+decr
+decrby
+getbit
+getrange
+incr
+indrby
+instrbyfloat
+mget
+mset
+msetnx
+psetex
+setbit
+setex
+setnx
+setrange
+stralgo
+*/
 
 /*
 a|foobar|b foobar is looped
@@ -264,6 +315,8 @@ int predis_init(void *magic_obj) {
   register_command(magic_obj, sgetset, sizeof(sgetset), &command_getset, sgetset_format, sizeof(sgetset_format) - 1);
   register_command(magic_obj, sbitcount, sizeof(sbitcount), &command_bitcount, sbitcount_format, sizeof(sbitcount_format) - 1);
   register_command(magic_obj, sbitpos, sizeof(sbitpos), &command_bitpos, sbitpos_format, sizeof(sbitpos_format) - 1);
+  register_command(magic_obj, sstrlen, sizeof(sstrlen), &command_strlen, sstrlen_format, sizeof(sstrlen_format) - 1);
+  register_command(magic_obj, smget, sizeof(smget), &command_mget, smget_format, sizeof(smget_format) - 1);
   return 0;
 }
 

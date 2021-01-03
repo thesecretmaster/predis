@@ -53,10 +53,14 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
   return 0;
 }
 
-int replyInt(struct predis_ctx *ctx, const int i) {
-  int length = snprintf( NULL, 0, "%d", i );
-  char* str = malloc( length + 1 );
-  snprintf( str, length + 1, "%d", i );
+int replyInt(struct predis_ctx *ctx, const long i) {
+  int length = snprintf( NULL, 0, "%ld", i );
+  if (length < 0)
+    return -1;
+  char* str = malloc((unsigned int)length + 1);
+  if (str == NULL)
+    return -2;
+  snprintf( str, (unsigned)length + 1, "%ld", i );
   return replySimpleString(ctx, str);
 }
 

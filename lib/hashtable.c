@@ -140,7 +140,7 @@ struct ht_table *ht_init() {
 }
 
 #ifndef HT_TEST_API
-static
+static inline
 #endif
 unsigned int ht_hash(const char *str, const unsigned int key_length) {
   unsigned int hash = 5381;
@@ -393,7 +393,8 @@ enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsi
   while (n->key_hash == key_hash) {
     if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
       if (__atomic_compare_exchange_n(&(p->next), &n, n->next, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-        *value = n->contents.value;
+        if (value != NULL)
+          *value = n->contents.value;
         // TODO: We can't actually free the node because something else might need it
         // Really we need to add it to the GC list
         // free(n->key);

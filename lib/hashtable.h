@@ -13,6 +13,7 @@ enum HT_RETURN_STATUS {
 
 enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void *value, struct type_ht_raw*);
 enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value, struct type_ht_raw*);
+enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 
 #ifdef HT_TEST_API
 struct ht_node;

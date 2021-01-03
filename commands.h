@@ -8,10 +8,10 @@
 typedef int (*predis_init_func)(void*);
 
 enum command_errors {
-  WRONG_ARG_COUNT,
-  DLOPEN_FAILED,
-  PREDIS_SUCCESS,
-  INVALID_TYPE
+  WRONG_ARG_COUNT = 1,
+  DLOPEN_FAILED = 3,
+  PREDIS_SUCCESS = 0,
+  INVALID_TYPE = 2
 };
 
 struct predis_ctx;
@@ -31,5 +31,5 @@ int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int ty
 int predis_init(void *magic_obj);
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);
-int replyInt(struct predis_ctx *ctx, const int i);
+int replyInt(struct predis_ctx *ctx, const long i);
 #endif
