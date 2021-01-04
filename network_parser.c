@@ -14,6 +14,7 @@
 #include "lib/command_ht.h"
 #include "lib/type_ht.h"
 #include "commands.h"
+#include "commands_data_types.h"
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
@@ -495,9 +496,10 @@ int main() {
   ctx.command_ht = command_ht;
   ctx.type_ht = type_ht;
   load_structures(&ctx, NULL, &((char*){"types/string.so"}), NULL, 1);
+  load_structures(&ctx, NULL, &((char*){"types/hash.so"}), NULL, 1);
   load_structures(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
   load_structures(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
-  // load_structures(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
+  load_structures(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
   struct conn_data *obj;
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);

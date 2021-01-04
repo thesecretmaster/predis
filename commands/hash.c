@@ -2,13 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../commands.h"
+#include "../types/hash.h"
 
-static int hash_hset(struct predis_ctx *ctx, struct predis_data **_data, char **_argv, argv_length_t *_argv_lengths, int argc) {
-  printf("Called!\n");
-  if (argc != 3)
-    return WRONG_ARG_COUNT;
+static int hash_hset(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+  hash_store(data[0], argv[1], argv_lengths[1], strdup(argv[2]));
+  return 0;
+}
 
-  replySimpleString(ctx, "hiiiiii");
+static int hash_hget(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+  char *str;
+  hash_find(data[0], argv[1], argv_lengths[1], &str);
+  replySimpleString(ctx, str);
   return 0;
 }
 
@@ -17,8 +21,12 @@ static int hash_hset(struct predis_ctx *ctx, struct predis_data **_data, char **
 // }
 
 static const char hhset[] = "hset";
+static const char hhset_format[] = "W{hash}SS";
+static const char hhget[] = "hget";
+static const char hhget_format[] = "R{hash}S";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, hhset, sizeof(hhset), &hash_hset, "Rcc", 3);
+  register_command(magic_obj, hhget, sizeof(hhget), &hash_hget, hhget_format, sizeof(hhget_format) - 1);
+  register_command(magic_obj, hhset, sizeof(hhset), &hash_hset, hhset_format, sizeof(hhset_format) - 1);
   return 0;
 }

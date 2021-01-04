@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "commands_data_types.h"
 
 #include "lib/1r1w_queue.h"
 

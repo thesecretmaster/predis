@@ -18,7 +18,9 @@ enum HT_ALLOC_STATUS {
 
 struct ht_value {
   void *value;
+#ifndef TYPE_HASH
   struct type_ht_raw *type;
+#endif
 };
 
 union ht_value_or_status {
@@ -32,7 +34,9 @@ union ht_value_or_status {
 struct ht_node {
   struct ht_node * volatile next;
   const char *key;
+#ifndef TYPE_HASH
   struct type_ht_raw *type;
+#endif
   unsigned int key_length;
   unsigned int key_hash;
   union ht_value_or_status contents;
@@ -292,7 +296,11 @@ static int ht_resize(struct ht_table *table) {
   return 0;
 }
 
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void *value, struct type_ht_raw *type) {
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void *value
+#ifndef TYPE_HASH
+  , struct type_ht_raw *type
+#endif
+) {
   if (table->element_count > (0x1 << table->bitlen)) {
     if (ht_resize(table) != 0) {
       return HT_OOM;
@@ -313,9 +321,11 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
   }
   while (n->key_hash == key_hash) {
     if (n->key != NULL && key_length == n->key_length && memcmp(key, n->key, key_length) == 0) {
+#ifndef TYPE_HASH
       if (n->type != type)
         return HT_WRONGTYPE;
       else
+#endif
         return HT_DUPLICATE_KEY;
     }
     p = n;
@@ -337,10 +347,14 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
   memcpy(key_copy, key, key_length);
   struct ht_value *value_wrap = malloc(sizeof(struct ht_value));
   value_wrap->value = value;
+#ifndef TYPE_HASH
   value_wrap->type = type;
+#endif
   new_node->key = key_copy;
   new_node->key_length = key_length;
+#ifndef TYPE_HASH
   new_node->type = type;
+#endif
   new_node->contents.value = value_wrap;
   new_node->key_hash = key_hash;
   new_node->next = n;
@@ -354,7 +368,11 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
   return HT_GOOD;
 }
 
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value, struct type_ht_raw *type) {
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value
+#ifndef TYPE_HASH
+  , struct type_ht_raw *type
+#endif
+) {
   unsigned int key_hash = ht_hash(key, key_length);
   struct ht_node *p = ht_get_sentinel(table, key_hash, false, NULL);
   struct ht_node *n = p->next;
@@ -367,9 +385,11 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const uns
   while (n->key_hash == key_hash) {
     if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
       value_wrap = n->contents.value;
+#ifndef TYPE_HASH
       if (type != value_wrap->type) {
         return HT_WRONGTYPE;
       }
+#endif
       *value = value_wrap->value;
       return HT_GOOD;
     }

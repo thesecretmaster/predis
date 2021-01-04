@@ -8,7 +8,7 @@ GPROF_FLAG = -pg
 CFLAGS = -fshort-enums # -Rpass='[^(licm|gvn)]' -Rpass-missed="inline"
 ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 
-all: bin/server commands/string.so commands/config.so types/string.so
+all: bin/server commands/string.so commands/config.so types/string.so types/hash.so commands/hash.so
 
 # lib/command_ht.c: lib/command_type_ht.c lib/command_ht.h
 # 	cp $< $@
@@ -23,14 +23,20 @@ tmp/%_ht.o: lib/%_ht.c
 bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/type_ht.o lib/hashtable.c lib/1r1w_queue.c command-shared.c lib/timer.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
 
-commands/%.so: commands/%.c command-shared.c tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c types/string.so
+commands/string.so: types/string.so
+commands/hash.so: types/hash.so
+commands/%.so: commands/%.c command-shared.c tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
+types/hash.so: tmp/type_hash_hashtable.o
 types/%.so: types/%.c command-shared.c tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 tmp/hashtable.%.o: lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="$*" -c $^ -o $@
+
+tmp/type_hash_hashtable.o: lib/hashtable.c
+	$(CC) $(ALL_FLAGS) -DTYPE_HASH -c $^ -o $@
 
 strsearch: strsearch.c
 	$(CC) $(DEBUG_FLAGS) $(SPEED_FLAGS) -Wall $^ -o $@
