@@ -1,7 +1,6 @@
 #ifndef COMMANDS_H
 #define COMMANDS_H
 
-#include "lib/command_bitmap_lib.h"
 #include <stdlib.h>
 #include "lib/1r1w_queue.h"
 
