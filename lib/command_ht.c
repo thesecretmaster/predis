@@ -135,6 +135,8 @@ static int parse_format_string(struct type_ht *type_ht, const char *str, const u
         break;
       }
       case '?' : {
+        if (seen_jump_node)
+          return -7; // Can't have both a jump and optargs
         allocate_node = false;
         optargs_count_raw = strtol(str + stridx + 1, &optargs_end, 10);
         if (optargs_count_raw < 0)

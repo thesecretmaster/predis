@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "hash.h"
+#include "../commands.h"
 #define TYPE_HASH
 #include "../lib/hashtable.h"
 #undef TYPE_HASH
@@ -17,16 +18,16 @@ static int free_hash(void *_ht) {
   return 0;
 }
 
-int hash_store(struct hash *table, const char *key, const unsigned int key_length, void *value) {
-  return ht_store((struct ht_table*)table, key, key_length, value);
+int hash_store(struct hash *table, const char *key, const unsigned int key_length, char *value) {
+  return ht_store((struct ht_table*)table, key, key_length, (void*)value);
 }
 
-int hash_find(struct hash *table, const char *key, const unsigned int key_length, void **value) {
-  return ht_find((struct ht_table*)table, key, key_length, value);
+int hash_find(struct hash *table, const char *key, const unsigned int key_length, char **value) {
+  return ht_find((struct ht_table*)table, key, key_length, (void**)value);
 }
 
-int hash_del(struct hash *table, const char *key, const unsigned int key_length, void **value) {
-  return ht_del((struct ht_table*)table, key, key_length, value);
+int hash_del(struct hash *table, const char *key, const unsigned int key_length, char **value) {
+  return ht_del((struct ht_table*)table, key, key_length, (void**)value);
 }
 
 int predis_init(void *magic_obj) {

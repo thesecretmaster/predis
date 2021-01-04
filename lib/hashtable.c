@@ -192,6 +192,11 @@ unsigned int ht_find_msb(unsigned int idx, unsigned int *base_2_log) {
   return idx & (omask << shift);
 }
 
+static inline
+bool ht_key_cmp(const char *key, unsigned int key_length, struct ht_node *node) {
+  return key != NULL && key_length == node->key_length && memcmp(key, node->key, key_length) == 0;
+}
+
 static inline struct ht_node *ht_get_sentinel(struct ht_table *table, unsigned int key_hash, bool create, struct ht_node **new_node) {
   unsigned int idx = ht_reverse_bits(key_hash) & ~((~(unsigned int)0x0) << table->bitlen);
   unsigned int bucket_idx;
@@ -320,7 +325,7 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
     n = __atomic_load_n(&n->next, __ATOMIC_SEQ_CST);
   }
   while (n->key_hash == key_hash) {
-    if (n->key != NULL && key_length == n->key_length && memcmp(key, n->key, key_length) == 0) {
+    if (ht_key_cmp(key, key_length, n)) {
 #ifndef TYPE_HASH
       if (n->type != type)
         return HT_WRONGTYPE;
@@ -383,7 +388,7 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const uns
     assert(n->key_hash >= p->key_hash);
   }
   while (n->key_hash == key_hash) {
-    if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
+    if (ht_key_cmp(key, key_length, n)) {
       value_wrap = n->contents.value;
 #ifndef TYPE_HASH
       if (type != value_wrap->type) {
@@ -411,7 +416,7 @@ enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsi
     assert(n->key_hash >= p->key_hash);
   }
   while (n->key_hash == key_hash) {
-    if (n->key != NULL && n->key_length == key_length && memcmp(key, n->key, key_length) == 0) {
+    if (ht_key_cmp(key, key_length, n)) {
       if (__atomic_compare_exchange_n(&(p->next), &n, n->next, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         if (value != NULL)
           *value = n->contents.value;
