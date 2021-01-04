@@ -38,53 +38,53 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
   if (!ctx->needs_reply)
     return 1;
 
-  // printf("REPLYSS\n");
-  unsigned long ss_len = strlen(ss);
-  char *buf = malloc(sizeof(char) * (1 + ss_len + 2));
-  buf[0] = '+';
-  buf[1 + ss_len] = '\r';
-  buf[1 + ss_len + 1] = '\n';
-  memcpy(buf + 1, ss, ss_len);
+  struct pre_send pre_send = {
+    .type = PRE_SEND_SS,
+    .data.ss = ss
+  };
+  queue_push(ctx->sending_queue, &pre_send);
   ctx->needs_reply = false;
-  struct pre_send_data *psd = malloc(sizeof(struct pre_send_data));
-  psd->length = 1 + ss_len + 2;
-  psd->msg = buf;
-  queue_push(ctx->sending_queue, psd);
+  return 0;
+}
+
+int replyError(struct predis_ctx *ctx, const char *err) {
+  if (!ctx->needs_reply)
+    return 1;
+
+  struct pre_send pre_send = {
+    .type = PRE_SEND_ERR,
+    .data.ss = err
+  };
+  queue_push(ctx->sending_queue, &pre_send);
+  ctx->needs_reply = false;
   return 0;
 }
 
 int replyInt(struct predis_ctx *ctx, const long i) {
-  int length = snprintf( NULL, 0, "%ld", i );
-  if (length < 0)
-    return -1;
-  char* str = malloc((unsigned int)length + 1);
-  if (str == NULL)
-    return -2;
-  snprintf( str, (unsigned)length + 1, "%ld", i );
-  return replySimpleString(ctx, str);
-}
+  if (!ctx->needs_reply)
+    return 1;
 
-static const char nil_bs[] = "$-1\r\n";
+  struct pre_send pre_send = {
+    .type = PRE_SEND_NUM,
+    .data.num = i
+  };
+  queue_push(ctx->sending_queue, &pre_send);
+  ctx->needs_reply = false;
+  return 0;
+}
 
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len) {
   if (!ctx->needs_reply)
     return 1;
+
+  struct pre_send pre_send = {
+    .type = PRE_SEND_BS,
+    .data.bs = {
+      .length = ss_len,
+      .contents = ss
+    }
+  };
+  queue_push(ctx->sending_queue, &pre_send);
   ctx->needs_reply = false;
-  // printf("REPLYBS\n");
-  struct pre_send_data *psd = malloc(sizeof(struct pre_send_data));
-  if (ss == NULL) {
-    psd->length = sizeof(nil_bs) - 1;
-    psd->msg = nil_bs;
-    queue_push(ctx->sending_queue, psd);
-    return 0;
-  }
-  int bufsize = snprintf(NULL, 0, "$%lu\r\n%s\r\n", ss_len, ss);
-  if (bufsize < 0)
-    return -1;
-  char *buf = malloc((unsigned)bufsize);
-  snprintf(buf, (unsigned)bufsize, "$%lu\r\n%s\r\n", ss_len, ss);
-  psd->length = (unsigned)bufsize;
-  psd->msg = buf;
-  queue_push(ctx->sending_queue, psd);
   return 0;
 }

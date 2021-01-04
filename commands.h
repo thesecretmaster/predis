@@ -16,9 +16,35 @@ enum command_errors {
 
 struct predis_ctx;
 
-struct pre_send_data {
-  size_t length;
-  const char *msg;
+enum pre_send_type {
+  PRE_SEND_SS,
+  PRE_SEND_NUM,
+  PRE_SEND_BS,
+  PRE_SEND_ARY,
+  PRE_SEND_ERR
+};
+
+struct pre_send_array {
+  long length;
+  struct pre_send *contents;
+};
+
+struct pre_send_bs {
+  long length;
+  const char *contents;
+};
+
+union pre_send_data {
+  const char *ss;
+  const char *err;
+  long num;
+  struct pre_send_array array;
+  struct pre_send_bs bs;
+};
+
+struct pre_send {
+  enum pre_send_type type;
+  union pre_send_data data;
 };
 
 typedef long argv_length_t;
@@ -32,4 +58,5 @@ int predis_init(void *magic_obj);
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);
 int replyInt(struct predis_ctx *ctx, const long i);
+int replyError(struct predis_ctx *ctx, const char *err);
 #endif

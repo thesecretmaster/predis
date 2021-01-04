@@ -343,12 +343,63 @@ static void *runner_queue(void *_cdata) {
   return NULL;
 }
 
+static void send_pre_data(int fd, struct pre_send *pre_send) {
+  unsigned long ss_len;
+  unsigned long len;
+  char *buf;
+  switch (pre_send->type) {
+    case PRE_SEND_SS : {
+      ss_len = strlen(pre_send->data.ss);
+      buf = malloc(sizeof(char) * (1 + ss_len + 2));
+      buf[0] = '+';
+      buf[1 + ss_len] = '\r';
+      buf[1 + ss_len + 1] = '\n';
+      memcpy(buf + 1, pre_send->data.ss, ss_len);
+      len = 1 + ss_len + 2;
+      break;
+    }
+    case PRE_SEND_ERR : {
+      ss_len = strlen(pre_send->data.err);
+      buf = malloc(sizeof(char) * (1 + ss_len + 2));
+      buf[0] = '-';
+      buf[1 + ss_len] = '\r';
+      buf[1 + ss_len + 1] = '\n';
+      memcpy(buf + 1, pre_send->data.err, ss_len);
+      len = 1 + ss_len + 2;
+      break;
+    }
+    case PRE_SEND_NUM : {
+      len = snprintf( NULL, 0, ":%ld\r\n", pre_send->data.num);
+      buf = malloc(len);
+      snprintf(buf, len, ":%ld\r\n", pre_send->data.num);
+      break;
+    }
+    case PRE_SEND_BS : {
+      len = snprintf(NULL, 0, "$%lu\r\n%.*s\r\n", pre_send->data.bs.length, pre_send->data.bs.length, pre_send->data.bs.contents);
+      buf = malloc(len);
+      snprintf(buf, len, "$%lu\r\n%.*s\r\n", pre_send->data.bs.length, pre_send->data.bs.length, pre_send->data.bs.contents);
+      break;
+    }
+    case PRE_SEND_ARY : {
+      len = snprintf( NULL, 0, "*%ld\r\n", pre_send->data.array.length);
+      buf = malloc(len);
+      snprintf(buf, len, "*%ld\r\n", pre_send->data.array.length);
+      send(fd, buf, len, MSG_NOSIGNAL);
+      for (unsigned i = 0; i < pre_send->data.array.length; i++) {
+        send_pre_data(fd, &(pre_send->data.array.contents[i]));
+      }
+      return;
+    }
+  }
+  send(fd, buf, len, MSG_NOSIGNAL);
+}
+
 static void *sender(void *_obj) {
   struct conn_data *obj = _obj;
   struct timer *timer = timer_init(obj->fd, THREAD_SENDER);
   timer_sum *tint = NULL; // silence warning; will always be initialized
   struct queue *q = obj->sending_queue;
-  struct pre_send_data data;
+  struct pre_send pre_send;
   int qpop_rval = 0;
   while (!queue_closed(q)) {
     if (qpop_rval == 0) {
@@ -356,11 +407,11 @@ static void *sender(void *_obj) {
     } else {
       timer_restart(tint);
     }
-    qpop_rval = queue_pop(q, (void*)&data);
+    qpop_rval = queue_pop(q, &pre_send);
     timer_incr(tint);
     if (qpop_rval == 0) {
       tint = timer_start_interval(timer, INTERVAL_RUNNING, 1);
-      send(obj->fd, data.msg, data.length, MSG_NOSIGNAL);
+      send_pre_data(obj->fd, &pre_send);
       timer_stop(tint);
     }
   }
@@ -458,7 +509,7 @@ int main() {
     // fcntl(obj->nonblock_fd, F_SETFL, O_NONBLOCK);
     obj->global_ht = global_ht;
     obj->processing_queue = queue_init(50, sizeof(struct resp_allocations*));
-    obj->sending_queue = queue_init(50, sizeof(struct pre_send_data));
+    obj->sending_queue = queue_init(50, sizeof(struct pre_send));
     assert(obj->sending_queue != NULL);
     obj->command_ht = command_ht;
     obj->type_ht = type_ht;
