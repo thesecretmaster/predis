@@ -19,7 +19,8 @@ static int free_hash(void *_ht) {
 }
 
 int hash_store(struct hash *table, const char *key, const unsigned int key_length, char *value) {
-  return ht_store((struct ht_table*)table, key, key_length, (void*)value);
+  void **tmp_val = (void**)&value;
+  return ht_store((struct ht_table*)table, key, key_length, tmp_val, true);
 }
 
 int hash_find(struct hash *table, const char *key, const unsigned int key_length, char **value) {

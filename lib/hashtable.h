@@ -13,10 +13,11 @@ enum HT_RETURN_STATUS {
   HT_WRONGTYPE = 4
 };
 
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void *value
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value
 #ifndef TYPE_HASH
   , struct type_ht_raw*
 #endif
+, bool update
 );
 enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value
 #ifndef TYPE_HASH

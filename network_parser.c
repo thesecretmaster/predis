@@ -140,6 +140,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   void *data_stack[10];
   bool command_is_meta;
   long fstring_index;
+  void **tmp_val;
   resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
   argc = (unsigned long)argc_raw;
   ctx->needs_reply = true;
@@ -171,7 +172,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             case FSTRING_MODIFY_CREATE: {
               // printf("Small c in %d %s\n", i, ptrs[i]);
               if (fstring->contents[fstring_index].details.type->init(&data[i]) == 0) {
-                switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], data[i], fstring->contents[fstring_index].details.type)) {
+                tmp_val = &data[i];
+                switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], tmp_val, fstring->contents[fstring_index].details.type, true)) {
                   case HT_DUPLICATE_KEY: {
                     // free(data[i]);
                     ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i], fstring->contents[fstring_index].details.type);
