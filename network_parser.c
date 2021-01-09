@@ -122,6 +122,8 @@ static void *packet_reciever_queue(void *_cdata) {
   return NULL;
 }
 
+#include "predis_arg_impl.c"
+
 static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct timer *timer) {
   timer_interval *tint;
   tint = timer_start_interval(timer, INTERVAL_RUNNING, resp_get_tag(resp_allocs));
@@ -136,11 +138,11 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   bool error_happened;
   bool error_resolved;
   int command_ht_rval;
-  void **data;
-  void *data_stack[10];
+  struct predis_arg *data;
+  struct predis_arg data_stack[10];
   bool command_is_meta;
   long fstring_index;
-  void **tmp_val;
+  struct predis_typed_data *typed_data;
   resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
   argc = (unsigned long)argc_raw;
   ctx->needs_reply = true;
@@ -163,7 +165,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
         if (argc < sizeof(data_stack)) {
           data = data_stack;
         } else {
-          data = malloc(sizeof(void*) * argc);
+          data = malloc(sizeof(struct predis_arg) * argc);
         }
         fstring_index = 0;
         for (unsigned long i = 0; i < argc; i++) {
@@ -171,48 +173,43 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
           switch(i > fstring->length ? FSTRING_STRING : fstring->contents[fstring_index].access_type) {
             case FSTRING_MODIFY_CREATE: {
               // printf("Small c in %d %s\n", i, ptrs[i]);
-              if (fstring->contents[fstring_index].details.type->init(&data[i]) == 0) {
-                tmp_val = &data[i];
-                switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], tmp_val, fstring->contents[fstring_index].details.type, true)) {
-                  case HT_DUPLICATE_KEY: {
-                    // free(data[i]);
-                    ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], (void**)&data[i], fstring->contents[fstring_index].details.type);
-                    break;
-                  }
-                  case HT_WRONGTYPE: {
-                    printf("Wrong type in MODIFY_CREATE op\n");
-                    error_happened = true;
-                    break;
-                  }
-                  case HT_OOM:
-                  case HT_NOT_FOUND: {
-                    printf("Weird error in MODIFY_CREATE\n");
-                    error_happened = true;
-                    break;
-                  }
-                  case HT_GOOD: {
-                    break;
-                  }
+              typed_data = malloc(sizeof(struct predis_typed_data));
+              typed_data->type = fstring->contents[fstring_index].details.type;
+              typed_data->data = NULL;
+              data[i].data = typed_data;
+              switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
+                case HT_GOOD: {
+                  data[i].needs_initialization = true;
+                  break;
                 }
-              } else {
-                printf("Initialization failed for type in MODIFY_CREATE op\n");
-                error_happened = true;
+                case HT_DUPLICATE_KEY: {
+                  // HANDLE WRONGTYPE HERE
+                  data[i].needs_initialization = false;
+                  // The duplicate key case is the same as the good case
+                  // because in both we're just making sure there's a reseved
+                  // spot for the modify or create to happen later.
+                  break;
+                }
+                case HT_BADARGS:
+                case HT_OOM:
+                case HT_NOT_FOUND: {
+                  printf("Weird error in MODIFY_CREATE\n");
+                  error_happened = true;
+                  break;
+                }
               }
               break;
             }
             case FSTRING_READONLY: {
               // printf("Big R in %d %s\n", i, ptrs[i]);
-              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i], fstring->contents[fstring_index].details.type)) {
-                case HT_WRONGTYPE: {
-                  printf("Wrong type in READONLY op\n");
-                  error_happened = true;
-                  break;
-                }
+              data[i].needs_initialization = false;
+              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
                 case HT_NOT_FOUND: {
                   // printf("Not found in READONLY\n");
                   error_happened = true;
                   break;
                 }
+                case HT_BADARGS:
                 case HT_DUPLICATE_KEY:
                 case HT_OOM: {
                   printf("Weird error in READONLY\n");
@@ -220,6 +217,11 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                   break;
                 }
                 case HT_GOOD: {
+                  if (data[i].data->type != fstring->contents[fstring_index].details.type) {
+                    printf("Wrong type in READONLY op\n");
+                    error_happened = true;
+                    break;
+                  }
                   break;
                 }
               }
@@ -230,16 +232,14 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
               break;
             }
             case FSTRING_READONLY_OPTIONAL: {
-              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &data[i], fstring->contents[fstring_index].details.type)) {
-                case HT_WRONGTYPE: {
-                  printf("Wrong type in READONLY op\n");
-                  error_happened = true;
-                  break;
-                }
+              data[i].needs_initialization = false;
+              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
                 case HT_NOT_FOUND: {
-                  data[i] = NULL;
+                  data[i].data = NULL;
+                  data[i].ht_value = NULL;
                   break;
                 }
+                case HT_BADARGS:
                 case HT_DUPLICATE_KEY:
                 case HT_OOM: {
                   printf("Weird error in READONLY\n");
@@ -247,6 +247,11 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                   break;
                 }
                 case HT_GOOD: {
+                  if (data[i].data->type != fstring->contents[fstring_index].details.type) {
+                    printf("Wrong type in READONLY op\n");
+                    error_happened = true;
+                    break;
+                  }
                   break;
                 }
               }
@@ -257,7 +262,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
               break;
             }
             case FSTRING_STRING: {
-              data[i] = NULL;
+              data[i].data = NULL;
+              data[i].ht_value = NULL;
               break;
             }
             case FSTRING_JUMP : {
@@ -274,9 +280,10 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             }
             case FSTRING_CREATE:
             case FSTRING_MODIFY_NOCREATE: {
-              printf("Can't handle this command yet\n");
+              printf("Can't handle this command type yet\n");
               error_happened = true;
-              data[i] = NULL;
+              data[i].data = NULL;
+              data[i].ht_value = NULL;
               break;
             }
           }
@@ -348,8 +355,9 @@ static void *runner_queue(void *_cdata) {
 
 static void send_pre_data(int fd, struct pre_send *pre_send) {
   unsigned long ss_len;
-  unsigned long len;
+  int len;
   char *buf;
+  char nil_bs[] = "$-1\r\n";
   switch (pre_send->type) {
     case PRE_SEND_SS : {
       ss_len = strlen(pre_send->data.ss);
@@ -358,7 +366,7 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
       buf[1 + ss_len] = '\r';
       buf[1 + ss_len + 1] = '\n';
       memcpy(buf + 1, pre_send->data.ss, ss_len);
-      len = 1 + ss_len + 2;
+      len = 1 + (int)ss_len + 2;
       break;
     }
     case PRE_SEND_ERR : {
@@ -368,33 +376,38 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
       buf[1 + ss_len] = '\r';
       buf[1 + ss_len + 1] = '\n';
       memcpy(buf + 1, pre_send->data.err, ss_len);
-      len = 1 + ss_len + 2;
+      len = 1 + (int)ss_len + 2;
       break;
     }
     case PRE_SEND_NUM : {
       len = snprintf( NULL, 0, ":%ld\r\n", pre_send->data.num);
-      buf = malloc(len);
-      snprintf(buf, len, ":%ld\r\n", pre_send->data.num);
+      buf = malloc((unsigned long)len);
+      snprintf(buf, (unsigned long)len, ":%ld\r\n", pre_send->data.num);
       break;
     }
     case PRE_SEND_BS : {
-      len = snprintf(NULL, 0, "$%lu\r\n%.*s\r\n", pre_send->data.bs.length, pre_send->data.bs.length, pre_send->data.bs.contents);
-      buf = malloc(len);
-      snprintf(buf, len, "$%lu\r\n%.*s\r\n", pre_send->data.bs.length, pre_send->data.bs.length, pre_send->data.bs.contents);
+      if (pre_send->data.bs.length == -1 && pre_send->data.bs.contents == NULL) {
+        len = sizeof(nil_bs) - 1;
+        buf = nil_bs;
+      } else {
+        len = snprintf(NULL, 0, "$%ld\r\n%.*s\r\n", pre_send->data.bs.length, (int)pre_send->data.bs.length, pre_send->data.bs.contents);
+        buf = malloc((unsigned long)len);
+        snprintf(buf, (unsigned long)len, "$%ld\r\n%.*s\r\n", pre_send->data.bs.length, (int)pre_send->data.bs.length, pre_send->data.bs.contents);
+      }
       break;
     }
     case PRE_SEND_ARY : {
       len = snprintf( NULL, 0, "*%ld\r\n", pre_send->data.array.length);
-      buf = malloc(len);
-      snprintf(buf, len, "*%ld\r\n", pre_send->data.array.length);
-      send(fd, buf, len, MSG_NOSIGNAL);
+      buf = malloc((unsigned long)len);
+      snprintf(buf, (unsigned long)len, "*%ld\r\n", pre_send->data.array.length);
+      send(fd, buf, (size_t)len, MSG_NOSIGNAL);
       for (unsigned i = 0; i < pre_send->data.array.length; i++) {
         send_pre_data(fd, &(pre_send->data.array.contents[i]));
       }
       return;
     }
   }
-  send(fd, buf, len, MSG_NOSIGNAL);
+  send(fd, buf, (size_t)len, MSG_NOSIGNAL);
 }
 
 static void *sender(void *_obj) {

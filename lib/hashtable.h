@@ -1,7 +1,3 @@
-#ifndef TYPE_HASH
-#include "type_ht.h"
-#endif
-
 struct ht_table;
 struct ht_table *ht_init(void);
 
@@ -10,20 +6,21 @@ enum HT_RETURN_STATUS {
   HT_OOM = 1,
   HT_DUPLICATE_KEY = 2,
   HT_NOT_FOUND = 3,
-  HT_WRONGTYPE = 4
+  HT_BADARGS = 4
 };
 
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value
-#ifndef TYPE_HASH
-  , struct type_ht_raw*
-#endif
-, bool update
-);
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value
-#ifndef TYPE_HASH
-  , struct type_ht_raw*
-#endif
-);
+/*
+For both ht_find and ht_store, the `value` is a pointer to a part of the
+hashtable node. So:
+         ht node
+         - stuff
+value -> - void *value -> actual value (struct string or smth)
+         - more stuff
+
+HOWEVER for ht_del (void*)value -> actual value
+*/
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 
 #ifdef HT_TEST_API

@@ -8,20 +8,18 @@ struct string {
 
 static const char string_type_name[] = "string";
 
-static int initialize_string(void **str_ptr_v) {
-  struct string **str_ptr = malloc(sizeof(struct string*));
+static int initialize_string(void **str_ptr) {
   struct string *str = malloc(sizeof(struct string));
   str->length = -1;
   str->data = NULL;
   *str_ptr = str;
-  *str_ptr_v = str_ptr;
   return 0;
 }
 
 static int free_string(void *_str) {
-  struct string **str = _str;
-  free((*str)->data);
-  free(*str);
+  struct string *str = _str;
+  free(str->data);
+  free(str);
   return 0;
 }
 

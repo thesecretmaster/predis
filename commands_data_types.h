@@ -1,9 +1,9 @@
 enum pre_send_type {
-  PRE_SEND_SS,
-  PRE_SEND_NUM,
-  PRE_SEND_BS,
-  PRE_SEND_ARY,
-  PRE_SEND_ERR
+  PRE_SEND_SS = 1,
+  PRE_SEND_NUM = 2,
+  PRE_SEND_BS = 3,
+  PRE_SEND_ARY = 4,
+  PRE_SEND_ERR = 5
 };
 
 struct pre_send_array {
@@ -24,7 +24,12 @@ union pre_send_data {
   struct pre_send_bs bs;
 };
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
+
 struct pre_send {
   enum pre_send_type type;
   union pre_send_data data;
 };
+
+#pragma GCC diagnostic pop

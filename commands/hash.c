@@ -1,18 +1,24 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../commands.h"
 #include "../types/hash.h"
 
-static int hash_hset(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
-  hash_store(data[0], argv[1], argv_lengths[1], strdup(argv[2]));
+static int hash_hset(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
+  predis_arg_try_initialize(data, 0);
+  hash_store(predis_arg_get(data, 0), argv[1], argv_lengths[1], strdup(argv[2]));
   return 0;
 }
 
-static int hash_hget(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int hash_hget(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
-  hash_find(data[0], argv[1], argv_lengths[1], &str);
-  replySimpleString(ctx, str);
+  int rval = hash_find(predis_arg_get(data, 0), argv[1], argv_lengths[1], &str);
+  if (rval == 0) {
+    replyBulkString(ctx, str, strlen(str));
+  } else if (rval == -1) {
+    replyBulkString(ctx, NULL, -1);
+  } else {
+    replyError(ctx, "Something went wrong");
+  }
   return 0;
 }
 

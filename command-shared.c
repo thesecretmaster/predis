@@ -10,7 +10,7 @@
 
 #include "lib/1r1w_queue.h"
 
-
+#include "predis_arg_impl.c"
 /*
 a|foobar|b foobar is looped
 w = write, existance optional
@@ -22,6 +22,27 @@ c = write, non-existance mandatory
 s = string
 i = int
 */
+
+void *predis_arg_get(struct predis_arg *args, unsigned int idx) {
+  if (args[idx].needs_initialization) {
+    printf("ERROR: Tried to get uninitialized arg\n");
+    return NULL;
+  }
+  return args[idx].data->data;
+}
+
+void *predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx) {
+  if (!arg[idx].needs_initialization) {
+    printf("WARNING: Tried to get initialize an arg that didn't need initialization (this is fine if we're in a modify/create, it just means we hit the modify option of that)\n");
+    return NULL;
+  }
+  arg[idx].data->type->init(&arg[idx].data->data);
+  arg[idx].needs_initialization = false;
+  __atomic_store_n((void**)arg[idx].ht_value, arg[idx].data, __ATOMIC_SEQ_CST);
+  return arg[idx].ht_value;
+}
+
+
 int register_command(struct predis_ctx *ctx, const char *command_name, const unsigned int command_name_length, command_func command, const char *format, const unsigned int format_length) {
   int r = command_ht_store(ctx->command_ht, command_name, command_name_length, command, format, format_length);
   printf("Stored command %.*s (%d)\n", command_name_length, command_name, r);
@@ -29,7 +50,6 @@ int register_command(struct predis_ctx *ctx, const char *command_name, const uns
 }
 
 int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int type_name_length, type_init_func tinit, type_free_func tfree) {
-  printf("Storing type %.*s\n", type_name_length, type_name);
   int r = type_ht_store(ctx->type_ht, type_name, type_name_length, &((struct type_ht_raw){tinit, tfree}));
   printf("Stored type %.*s (%d)\n", type_name_length, type_name, r);
   return 0;

@@ -3,7 +3,7 @@
 #include <string.h>
 #include "../commands.h"
 
-static int print1cmd(struct predis_ctx *ctx, void **_data, char **argv, argv_length_t *argv_lengths, int _argc) {
+static int print1cmd(struct predis_ctx *ctx, struct predis_arg *_data, char **argv, argv_length_t *argv_lengths, int _argc) {
   if (strcmp(argv[0], "SET") == 0) {
     for (int i = 0; i < _argc; i++)
       printf("%s ", argv[i]);

@@ -20,9 +20,13 @@ typedef long argv_length_t;
 #include "lib/command_ht.h"
 #include "lib/type_ht.h"
 
+struct predis_arg;
+
 int register_command(struct predis_ctx *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *data_str, const unsigned int);
 int register_type(struct predis_ctx *ctx, const char *type_name, unsigned int type_name_length, type_init_func tinit, type_free_func tfree);
 int predis_init(void *magic_obj);
+void *predis_arg_get(struct predis_arg*, unsigned int idx);
+void *predis_arg_try_initialize(struct predis_arg*, unsigned int idx);
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);
 int replyInt(struct predis_ctx *ctx, const long i);

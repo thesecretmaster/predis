@@ -7,24 +7,24 @@
 // Thought processes: Hashtable holds a CONSTANT pointer (data[i])
 // data[i] needs to be a (struct string**) because we can't change it
 
-static int command_set(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 2)
     return WRONG_ARG_COUNT;
 
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
-
-  string_set(data[0], argv[1], argv_lengths[1]);
+  predis_arg_try_initialize(data, 0);
+  string_set(predis_arg_get(data, 0), argv[1], argv_lengths[1]);
   return PREDIS_SUCCESS;
 }
 
-static int command_get(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_get(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1)
     return WRONG_ARG_COUNT;
 
   char *str;
   long length;
-  string_get(data[0], &str, &length);
+  string_get(predis_arg_get(data, 0), &str, &length);
   replyBulkString(ctx, str, length);
   return PREDIS_SUCCESS;
 }
@@ -91,12 +91,12 @@ static size_t redisPopcount(void *s, long count) {
 }
 #pragma GCC diagnostic pop
 
-static int command_bitcount(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_bitcount(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1 && argc != 3)
     return WRONG_ARG_COUNT;
   char *str;
   long length;
-  string_get(data[0], &str, &length);
+  string_get(predis_arg_get(data, 0), &str, &length);
 
   // long start = 0;
   // long end = length;
@@ -221,16 +221,16 @@ static long redisBitpos(void *s, unsigned long count, int bit) {
 }
 #pragma GCC diagnostic pop
 
-static int command_bitpos(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_bitpos(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
   long length;
-  string_get(data[0], &str, &length);
+  string_get(predis_arg_get(data, 0), &str, &length);
   long bp = redisBitpos(str, (unsigned long)length, (int)strtol(argv[1], NULL, 10));
   replyInt(ctx, (int)bp);
   return PREDIS_SUCCESS;
 }
 
-static int command_getset(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 2)
     return WRONG_ARG_COUNT;
 
@@ -239,15 +239,16 @@ static int command_getset(struct predis_ctx *ctx, void **data, char **argv, argv
 
   char *str;
   long length;
-  string_exchange(data[0], &str, &length, argv[1], argv_lengths[1]);
+  predis_arg_try_initialize(data, 0);
+  string_exchange(predis_arg_get(data, 0), &str, &length, argv[1], argv_lengths[1]);
   replyBulkString(ctx, str, length);
   return PREDIS_SUCCESS;
 }
 
-static int command_strlen(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_strlen(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
   long length;
-  string_get(data[0], &str, &length);
+  string_get(predis_arg_get(data, 0), &str, &length);
   replyInt(ctx, length);
   return 0;
 }
@@ -267,7 +268,7 @@ static const char sstrlen_format[] = "R{string}";
 static const char smget[] = "MGET";
 static const char smget_format[] = "S|r{string}|S";
 
-static int command_mget(struct predis_ctx *ctx, void **data, char **argv, argv_length_t *argv_lengths, int argc) {
+static int command_mget(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   printf("MGET called\n");
   for (int i = 1; i < argc - 1; i++) {
     printf("Mget field: %.*s\n", argv_lengths[i], argv[i]);

@@ -1,9 +1,7 @@
 #include <stdio.h>
 #include "hash.h"
 #include "../commands.h"
-#define TYPE_HASH
 #include "../lib/hashtable.h"
-#undef TYPE_HASH
 
 static const char hash_type_name[] = "hash";
 
@@ -19,12 +17,26 @@ static int free_hash(void *_ht) {
 }
 
 int hash_store(struct hash *table, const char *key, const unsigned int key_length, char *value) {
-  void **tmp_val = (void**)&value;
-  return ht_store((struct ht_table*)table, key, key_length, tmp_val, true);
+  void *value_dup = value;
+  return ht_store((struct ht_table*)table, key, key_length, &value_dup);
 }
 
 int hash_find(struct hash *table, const char *key, const unsigned int key_length, char **value) {
-  return ht_find((struct ht_table*)table, key, key_length, (void**)value);
+  void *ht_value;
+  switch (ht_find((struct ht_table*)table, key, key_length, &ht_value)) {
+    case HT_GOOD:
+    case HT_DUPLICATE_KEY: {
+      *value = *((char**)ht_value);
+      return 0;
+    }
+    case HT_OOM:
+    case HT_BADARGS: {
+      return -2;
+    }
+    case HT_NOT_FOUND: {
+      return -1;
+    }
+  }
 }
 
 int hash_del(struct hash *table, const char *key, const unsigned int key_length, char **value) {
