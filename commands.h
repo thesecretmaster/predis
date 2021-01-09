@@ -10,7 +10,8 @@ enum command_errors {
   WRONG_ARG_COUNT = 1,
   DLOPEN_FAILED = 3,
   PREDIS_SUCCESS = 0,
-  INVALID_TYPE = 2
+  INVALID_TYPE = 2,
+  PREDIS_FAILURE = 4
 };
 
 struct predis_ctx;

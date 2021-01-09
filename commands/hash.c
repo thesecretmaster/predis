@@ -4,16 +4,20 @@
 #include "../types/hash.h"
 
 static int hash_hset(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
+  if (argv_lengths[1] < 0)
+    return PREDIS_FAILURE;
   predis_arg_try_initialize(data, 0);
-  hash_store(predis_arg_get(data, 0), argv[1], argv_lengths[1], strdup(argv[2]));
+  hash_store(predis_arg_get(data, 0), argv[1], (unsigned int)argv_lengths[1], strdup(argv[2]));
   return 0;
 }
 
 static int hash_hget(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
-  int rval = hash_find(predis_arg_get(data, 0), argv[1], argv_lengths[1], &str);
+  if (argv_lengths[1] < 0)
+    return PREDIS_FAILURE;
+  int rval = hash_find(predis_arg_get(data, 0), argv[1], (unsigned int)argv_lengths[1], &str);
   if (rval == 0) {
-    replyBulkString(ctx, str, strlen(str));
+    replyBulkString(ctx, str, (long)strlen(str));
   } else if (rval == -1) {
     replyBulkString(ctx, NULL, -1);
   } else {

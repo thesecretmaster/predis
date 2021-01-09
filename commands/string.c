@@ -271,9 +271,9 @@ static const char smget_format[] = "S|r{string}|S";
 static int command_mget(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   printf("MGET called\n");
   for (int i = 1; i < argc - 1; i++) {
-    printf("Mget field: %.*s\n", argv_lengths[i], argv[i]);
+    printf("Mget field: %.*s\n", (int)argv_lengths[i], argv[i]);
   }
-  printf("First: %.*s\nLast: %.*s\n", argv_lengths[0], argv[0], argv_lengths[argc - 1], argv[argc - 1]);
+  printf("First: %.*s\nLast: %.*s\n", (int)argv_lengths[0], argv[0], (int)argv_lengths[argc - 1], argv[argc - 1]);
   return PREDIS_SUCCESS;
 }
 

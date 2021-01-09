@@ -36,7 +36,7 @@ struct conn_data {
 
 #pragma GCC diagnostic pop
 
-static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) void **_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
+static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struct predis_arg *_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
   printf("Starting load\n");
   if (argc != 1)
     return WRONG_ARG_COUNT;
@@ -464,7 +464,8 @@ static const char load_cmd_name[] = "load";
 static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc) {
   struct ht_table *table = _global_ht_table;
   for (int i = 0; i < argc; i++)
-    ht_del(table, argv[i], argv_lengths[i], NULL);
+    if (argv_lengths[i] > 0)
+      ht_del(table, argv[i], (unsigned int)argv_lengths[i], NULL);
   return 0;
 }
 
