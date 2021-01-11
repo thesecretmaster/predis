@@ -5,7 +5,9 @@
 
 static const char hash_type_name[] = "hash";
 
-static int initialize_hash(void **ht_ptr) {
+static int initialize_hash(void **ht_ptr, void *_hargs) {
+  if (_hargs != NULL)
+    printf("YOU CANT PASS ARGS TO A HT SORRY\n");
   struct ht_table *ht = ht_init();
   *ht_ptr = ht;
   return 0;

@@ -9,10 +9,16 @@ struct string {
 
 static const char string_type_name[] = "string";
 
-static int initialize_string(void **str_ptr) {
+static int initialize_string(void **str_ptr, void *_str_args) {
   struct string *str = malloc(sizeof(struct string));
-  str->length = -1;
-  str->data = NULL;
+  struct string_args *str_args = _str_args;
+  if (str_args == NULL) {
+    str->length = -1;
+    str->data = NULL;
+  } else {
+    str->length = str_args->len;
+    str->data = str_args->str;
+  }
   *str_ptr = str;
   return 0;
 }

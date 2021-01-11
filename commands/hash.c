@@ -7,7 +7,7 @@ static int hash_hset(struct predis_ctx *ctx, struct predis_arg *data, char **arg
   if (argv_lengths[1] < 0)
     return PREDIS_FAILURE;
   struct hash **hsh;
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&hsh);
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&hsh, NULL);
   failed_commit:
   hash_store(*hsh, argv[1], (unsigned int)argv_lengths[1], strdup(argv[2]));
   if (should_commit) {

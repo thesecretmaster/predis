@@ -5,7 +5,7 @@
 
 struct type_ht;
 
-typedef int (*type_init_func)(void**);
+typedef int (*type_init_func)(void**, void*);
 typedef int (*type_free_func)(void*);
 
 struct type_ht_raw {

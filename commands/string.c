@@ -14,7 +14,8 @@ static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **a
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
   struct string **str;
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str);
+  struct string_args str_args = {.len = (unsigned int)argv_lengths[1], .str = argv[1]};
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str, &str_args);
   // printf("Tried to init string. Do we need to commit? %s\n", should_commit ? "yes" : "no");
   failed_commit:
   // printf("Doing a string set (%.*s)\n", argv_lengths[1], argv[1]);
@@ -252,7 +253,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
   char *str_raw;
   long length;
   struct string **str;
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str);
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str, NULL);
   failed_commit:
   string_exchange(str, &str_raw, &length, argv[1], argv_lengths[1]);
   if (should_commit) {

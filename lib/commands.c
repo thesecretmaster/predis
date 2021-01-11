@@ -32,14 +32,14 @@ void *predis_arg_get(struct predis_arg *args, unsigned int idx) {
   return args[idx].data->data;
 }
 
-bool predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx, void ***value) {
+bool predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx, void ***value, void *initializer_args) {
   if (!arg[idx].needs_initialization) {
     printf("WARNING: Tried to get initialize an arg that didn't need initialization (this is fine if we're in a modify/create, it just means we hit the modify option of that)\n");
     if (value != NULL)
       *value = &(arg[idx].data->data);
     return false;
   }
-  arg[idx].data->type->init(&(arg[idx].data->data));
+  arg[idx].data->type->init(&(arg[idx].data->data), initializer_args);
   if (value != NULL)
     *value = &arg[idx].data->data;
   return __atomic_load_n((void**)arg[idx].ht_value, __ATOMIC_SEQ_CST) == NULL;
