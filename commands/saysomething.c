@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../commands.h"
+#include "../public/commands.h"
 
 static int print1cmd(struct predis_ctx *ctx, void **_data, char **argv, argv_length_t *argv_lengths, int argc) {
   for (int i = 0; i < argc; i++) {

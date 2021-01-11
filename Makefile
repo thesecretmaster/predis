@@ -19,17 +19,19 @@ all: bin/server commands/string.so commands/config.so types/string.so types/hash
 tmp/%_ht.o: lib/%_ht.c
 	$(CC) $(ALL_FLAGS) -c $^ -o $@
 
-# Command-shared.c shouldn't be in this list, it's just for temporaries
-bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/type_ht.o lib/hashtable.c lib/1r1w_queue.c command-shared.c lib/timer.c
+tmp/commands.o: lib/commands.c
+	$(CC) $(ALL_FLAGS) -c $^ -o $@
+
+bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o lib/hashtable.c lib/1r1w_queue.c lib/timer.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
 
 commands/string.so: types/string.so
 commands/hash.so: types/hash.so
-commands/%.so: commands/%.c command-shared.c tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
+commands/%.so: commands/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 types/hash.so: tmp/type_hash_hashtable.o
-types/%.so: types/%.c command-shared.c tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
+types/%.so: types/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 tmp/hashtable.%.o: lib/hashtable.c

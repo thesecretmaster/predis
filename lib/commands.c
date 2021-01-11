@@ -1,16 +1,17 @@
-#include "lib/command_ht.h"
-#include "lib/type_ht.h"
-#include "commands.h"
-#include "predis_ctx.h"
+#include "command_ht.h"
+#include "type_ht.h"
+#include "../public/commands.h"
+#include "../public/types.h"
+#include "../predis_ctx.h"
 #include <sys/socket.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "commands_data_types.h"
+#include "../send_queue.h"
 
-#include "lib/1r1w_queue.h"
+#include "1r1w_queue.h"
 
-#include "predis_arg_impl.c"
+#include "../predis_arg_impl.c"
 /*
 a|foobar|b foobar is looped
 w = write, existance optional
@@ -25,21 +26,45 @@ i = int
 
 void *predis_arg_get(struct predis_arg *args, unsigned int idx) {
   if (args[idx].needs_initialization) {
-    printf("ERROR: Tried to get uninitialized arg\n");
+    printf("ERROR: Tried to get uninitialized or uncommitted arg\n");
     return NULL;
   }
   return args[idx].data->data;
 }
 
-void *predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx) {
+bool predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx, void ***value) {
   if (!arg[idx].needs_initialization) {
     printf("WARNING: Tried to get initialize an arg that didn't need initialization (this is fine if we're in a modify/create, it just means we hit the modify option of that)\n");
-    return NULL;
+    if (value != NULL)
+      *value = &(arg[idx].data->data);
+    return false;
   }
-  arg[idx].data->type->init(&arg[idx].data->data);
+  arg[idx].data->type->init(&(arg[idx].data->data));
+  if (value != NULL)
+    *value = &arg[idx].data->data;
+  return __atomic_load_n((void**)arg[idx].ht_value, __ATOMIC_SEQ_CST) == NULL;
+}
+
+int predis_arg_try_commit(struct predis_arg *arg, unsigned int idx, void ***value) {
+  void *nul = NULL;
   arg[idx].needs_initialization = false;
-  __atomic_store_n((void**)arg[idx].ht_value, arg[idx].data, __ATOMIC_SEQ_CST);
-  return arg[idx].ht_value;
+  // printf("Committing value. Value is in %p\n", arg[idx].data);
+  if (__atomic_compare_exchange_n((void**)arg[idx].ht_value, &nul, arg[idx].data, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+    // printf("We committed it! Now it's in %p\n", *(void**)arg[idx].ht_value);
+    // arg[idx].data = *(struct predis_typed_data**)arg[idx].ht_value;
+    if (value != NULL)
+      *value = &arg[idx].data->data;
+    return 0;
+  } else if ((*(struct predis_typed_data**)(arg[idx].ht_value))->type == arg->data->type) {
+    // printf("No. Bad\n");
+    arg[idx].data = *(struct predis_typed_data**)arg[idx].ht_value;
+    if (value != NULL)
+      *value = &arg[idx].data->data;
+    return 1;
+  } else {
+    // printf("Very bad\n");
+    return -1;
+  }
 }
 
 

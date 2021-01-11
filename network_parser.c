@@ -13,8 +13,8 @@
 #include "lib/resp_parser.h"
 #include "lib/command_ht.h"
 #include "lib/type_ht.h"
-#include "commands.h"
-#include "commands_data_types.h"
+#include "public/commands.h"
+#include "send_queue.h"
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
@@ -169,21 +169,30 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
         }
         fstring_index = 0;
         for (unsigned long i = 0; i < argc; i++) {
+          data[i].ht_value = NULL;
+          data[i].data = NULL;
           // printf("Pargins arg[%lu] = fstring[%ld], %s\n", i, fstring_index, ptrs[i]);
           switch(i > fstring->length ? FSTRING_STRING : fstring->contents[fstring_index].access_type) {
             case FSTRING_MODIFY_CREATE: {
               // printf("Small c in %d %s\n", i, ptrs[i]);
-              typed_data = malloc(sizeof(struct predis_typed_data));
-              typed_data->type = fstring->contents[fstring_index].details.type;
-              typed_data->data = NULL;
-              data[i].data = typed_data;
               switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
                 case HT_GOOD: {
+                  typed_data = malloc(sizeof(struct predis_typed_data));
+                  typed_data->type = fstring->contents[fstring_index].details.type;
+                  typed_data->data = NULL;
+                  data[i].data = typed_data;
                   data[i].needs_initialization = true;
                   break;
                 }
                 case HT_DUPLICATE_KEY: {
                   // HANDLE WRONGTYPE HERE
+                  data[i].data = *(struct predis_typed_data**)data[i].ht_value;
+                  if (data[i].data->type != fstring->contents[fstring_index].details.type) {
+                    replyError(ctx, "ERR WRONGTYPE");
+                    error_happened = true;
+                    error_resolved = true;
+                    break;
+                  }
                   data[i].needs_initialization = false;
                   // The duplicate key case is the same as the good case
                   // because in both we're just making sure there's a reseved
@@ -217,9 +226,11 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                   break;
                 }
                 case HT_GOOD: {
+                  data[i].data = *(struct predis_typed_data**)data[i].ht_value;
                   if (data[i].data->type != fstring->contents[fstring_index].details.type) {
-                    printf("Wrong type in READONLY op\n");
+                    replyError(ctx, "ERR WRONGTYPE");
                     error_happened = true;
+                    error_resolved = true;
                     break;
                   }
                   break;

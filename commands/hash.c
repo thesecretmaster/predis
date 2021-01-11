@@ -1,13 +1,21 @@
 #include <stdlib.h>
 #include <string.h>
-#include "../commands.h"
+#include "../public/commands.h"
 #include "../types/hash.h"
 
 static int hash_hset(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argv_lengths[1] < 0)
     return PREDIS_FAILURE;
-  predis_arg_try_initialize(data, 0);
-  hash_store(predis_arg_get(data, 0), argv[1], (unsigned int)argv_lengths[1], strdup(argv[2]));
+  struct hash **hsh;
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&hsh);
+  failed_commit:
+  hash_store(*hsh, argv[1], (unsigned int)argv_lengths[1], strdup(argv[2]));
+  if (should_commit) {
+    if (predis_arg_try_commit(data, 0, (void***)&hsh) == 0) {
+    } else {
+      goto failed_commit;
+    }
+  }
   return 0;
 }
 

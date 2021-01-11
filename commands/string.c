@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "../commands.h"
+#include "../public/commands.h"
 #include "../types/string.h"
 
 // Thought processes: Hashtable holds a CONSTANT pointer (data[i])
@@ -13,8 +13,20 @@ static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **a
 
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
-  predis_arg_try_initialize(data, 0);
-  string_set(predis_arg_get(data, 0), argv[1], argv_lengths[1]);
+  struct string **str;
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str);
+  // printf("Tried to init string. Do we need to commit? %s\n", should_commit ? "yes" : "no");
+  failed_commit:
+  // printf("Doing a string set (%.*s)\n", argv_lengths[1], argv[1]);
+  string_set(str, argv[1], argv_lengths[1]);
+  if (should_commit) {
+    if (predis_arg_try_commit(data, 0, (void***)&str) == 0) {
+      // printf("Tried to commit string. It worked!\n");
+    } else {
+      // printf("Tried to commit string. It didn't work\n");
+      goto failed_commit;
+    }
+  }
   return PREDIS_SUCCESS;
 }
 
@@ -237,11 +249,18 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
 
-  char *str;
+  char *str_raw;
   long length;
-  predis_arg_try_initialize(data, 0);
-  string_exchange(predis_arg_get(data, 0), &str, &length, argv[1], argv_lengths[1]);
-  replyBulkString(ctx, str, length);
+  struct string **str;
+  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str);
+  failed_commit:
+  string_exchange(str, &str_raw, &length, argv[1], argv_lengths[1]);
+  if (should_commit) {
+    should_commit = predis_arg_try_commit(data, 0, (void***)&str) != 0;
+    if (!should_commit)
+      goto failed_commit;
+  }
+  replyBulkString(ctx, str_raw, length);
   return PREDIS_SUCCESS;
 }
 

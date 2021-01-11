@@ -2,17 +2,14 @@
 #define LIB_COMMAND_HT
 
 #include <stdbool.h>
-#include "../predis_ctx.h"
-typedef long argv_length_t;
+#include "command_ht_pub.h"
+
 struct predis_data {
   const char *data_type;
   void *data;
 };
-struct predis_arg;
-struct command_ht;
 
-typedef int (*command_func)(struct predis_ctx *ctx, struct predis_arg *argv_data, char **argv_strings, argv_length_t *argv_string_lengths, int argc);
-typedef int (*meta_command_func)(struct predis_ctx *ctx, void *global_ht_table /* I know this should be type checked but tbh this is a bit of a hack */, char **argv, argv_length_t *argv_lengths, int argc);
+struct command_ht;
 
 union command_ht_command_funcs {
   command_func normal;

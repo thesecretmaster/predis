@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include "hash.h"
-#include "../commands.h"
+#include "../public/types.h"
 #include "../lib/hashtable.h"
 
 static const char hash_type_name[] = "hash";

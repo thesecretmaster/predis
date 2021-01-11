@@ -1,4 +1,5 @@
-#include "../commands.h"
+#include <stdlib.h>
+#include "../public/types.h"
 #include "string.h"
 
 struct string {
@@ -33,8 +34,8 @@ int string_set(struct string **data_loc, char *str_raw, const long length) {
   return 0;
 }
 
-int string_get(struct string **data_loc, char **str_raw, long *length) {
-  struct string *str = __atomic_load_n(data_loc, __ATOMIC_SEQ_CST);
+int string_get(struct string *data_loc, char **str_raw, long *length) {
+  struct string *str = __atomic_load_n(&data_loc, __ATOMIC_SEQ_CST);
   *str_raw = str->data;
   *length = str->length;
   return 0;

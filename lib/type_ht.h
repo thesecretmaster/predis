@@ -2,7 +2,6 @@
 #define LIB_TYPE_HT
 
 #include <stdbool.h>
-#include "../predis_ctx.h"
 
 struct type_ht;
 
