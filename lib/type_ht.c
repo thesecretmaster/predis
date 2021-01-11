@@ -79,11 +79,13 @@ int type_ht_store(struct type_ht *ht, const char *type_name, const unsigned int 
 int type_ht_fetch(struct type_ht *ht, const char *type_name, unsigned int type_name_length, struct type_ht_raw **type_raw) {
   unsigned int base_index = hash(type_name, type_name_length) % ht->size;
   unsigned int index = base_index;
-  while (ht->elements[index].type_name != NULL && ht->elements[index].type_name_length != type_name_length && strncasecmp(type_name, ht->elements[index].type_name, type_name_length) != 0) {
+  while (ht->elements[index].type_name != NULL && (ht->elements[index].type_name_length != type_name_length || strncasecmp(type_name, ht->elements[index].type_name, type_name_length) != 0)) {
     index = index + 1 % ht->size;
     if (index == base_index)
       return -1;
   }
+  if (ht->elements[index].type_name == NULL)
+    return -1;
   *type_raw = &ht->elements[index].type_raw;
   return 0;
 }

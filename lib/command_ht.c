@@ -250,13 +250,13 @@ int command_ht_store_meta(struct command_ht *ht, const char *command_name, const
 int command_ht_fetch(struct command_ht *ht, char *command_name, const unsigned int command_name_length, struct format_string **fstring, union command_ht_command_funcs *command_func, bool *is_meta) {
   unsigned int base_index = hash((unsigned char*)command_name) % ht->size;
   unsigned int index = base_index;
-  while (ht->elements[index].command_name != NULL && ht->elements[index].command_name_length != command_name_length && strncasecmp(command_name, ht->elements[index].command_name, command_name_length) != 0) {
+  while (ht->elements[index].command_name != NULL && (ht->elements[index].command_name_length != command_name_length || strncasecmp(command_name, ht->elements[index].command_name, command_name_length) != 0)) {
     index = index + 1 % ht->size;
     if (index == base_index)
       return 1;
   }
   if (ht->elements[index].command_name == NULL)
-    return 2;
+    return 1;
   *fstring = ht->elements[index].fstring;
   *command_func = ht->elements[index].command;
   *is_meta = ht->elements[index].is_meta;
