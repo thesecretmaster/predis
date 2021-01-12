@@ -7,15 +7,9 @@ static int hash_hset(struct predis_ctx *ctx, struct predis_arg *data, char **arg
   if (argv_lengths[1] < 0)
     return PREDIS_FAILURE;
   struct hash **hsh;
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&hsh, NULL);
-  failed_commit:
+  predis_arg_try_initialize(data, 0, (void***)&hsh, NULL);
+  predis_arg_try_commit(data, 0, (void***)&hsh);
   hash_store(*hsh, argv[1], (unsigned int)argv_lengths[1], strdup(argv[2]));
-  if (should_commit) {
-    if (predis_arg_try_commit(data, 0, (void***)&hsh) == 0) {
-    } else {
-      goto failed_commit;
-    }
-  }
   return 0;
 }
 
@@ -23,7 +17,7 @@ static int hash_hget(struct predis_ctx *ctx, struct predis_arg *data, char **arg
   char *str;
   if (argv_lengths[1] < 0)
     return PREDIS_FAILURE;
-  int rval = hash_find(predis_arg_get(data, 0), argv[1], (unsigned int)argv_lengths[1], &str);
+  int rval = hash_find(*predis_arg_get(data, 0), argv[1], (unsigned int)argv_lengths[1], &str);
   if (rval == 0) {
     replyBulkString(ctx, str, (long)strlen(str));
   } else if (rval == -1) {
@@ -44,7 +38,7 @@ static const char hhget[] = "hget";
 static const char hhget_format[] = "R{hash}S";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, hhget, sizeof(hhget), &hash_hget, hhget_format, sizeof(hhget_format) - 1);
-  register_command(magic_obj, hhset, sizeof(hhset), &hash_hset, hhset_format, sizeof(hhset_format) - 1);
+  register_command(magic_obj, hhget, sizeof(hhget) - 1, &hash_hget, hhget_format, sizeof(hhget_format) - 1);
+  register_command(magic_obj, hhset, sizeof(hhset) - 1, &hash_hset, hhset_format, sizeof(hhset_format) - 1);
   return 0;
 }

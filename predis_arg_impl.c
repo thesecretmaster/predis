@@ -8,6 +8,7 @@ struct predis_typed_data {
 
 struct predis_arg {
   bool needs_initialization;
+  bool needs_commit;
   struct predis_typed_data *data;
   void *ht_value; // This is a pointer to a spot in a ht_node. It will act a
                   // lot like a void** rather than a void*

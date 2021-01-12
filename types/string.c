@@ -19,7 +19,7 @@ static int initialize_string(void **str_ptr, void *_str_args) {
     str->length = str_args->len;
     str->data = str_args->str;
   }
-  *str_ptr = str;
+  __atomic_store_n(str_ptr, str, __ATOMIC_SEQ_CST);
   return 0;
 }
 

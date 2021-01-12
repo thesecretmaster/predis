@@ -2,7 +2,7 @@ struct string;
 
 struct string_args {
   char *str;
-  unsigned int len;
+  long len;
 };
 
 int string_set(struct string **data_loc, char *str, const long length);

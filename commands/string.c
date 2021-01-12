@@ -4,9 +4,6 @@
 #include "../public/commands.h"
 #include "../types/string.h"
 
-// Thought processes: Hashtable holds a CONSTANT pointer (data[i])
-// data[i] needs to be a (struct string**) because we can't change it
-
 static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 2)
     return WRONG_ARG_COUNT;
@@ -14,19 +11,15 @@ static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **a
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
   struct string **str;
-  struct string_args str_args = {.len = (unsigned int)argv_lengths[1], .str = argv[1]};
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str, &str_args);
-  // printf("Tried to init string. Do we need to commit? %s\n", should_commit ? "yes" : "no");
-  failed_commit:
-  // printf("Doing a string set (%.*s)\n", argv_lengths[1], argv[1]);
-  string_set(str, argv[1], argv_lengths[1]);
-  if (should_commit) {
-    if (predis_arg_try_commit(data, 0, (void***)&str) == 0) {
-      // printf("Tried to commit string. It worked!\n");
-    } else {
-      // printf("Tried to commit string. It didn't work\n");
-      goto failed_commit;
+  struct string_args str_args = {.len = argv_lengths[1], .str = argv[1]};
+  retry:
+  if (predis_arg_requires_initialization(data, 0)) {
+    predis_arg_try_initialize(data, 0, (void***)&str, &str_args);
+    if (predis_arg_try_commit(data, 0, (void***)&str) != 0) {
+      goto retry;
     }
+  } else {
+    string_set(predis_arg_get(data, 0), argv[1], argv_lengths[1]);
   }
   return PREDIS_SUCCESS;
 }
@@ -37,7 +30,7 @@ static int command_get(struct predis_ctx *ctx, struct predis_arg *data, char **a
 
   char *str;
   long length;
-  string_get(predis_arg_get(data, 0), &str, &length);
+  string_get(*predis_arg_get(data, 0), &str, &length);
   replyBulkString(ctx, str, length);
   return PREDIS_SUCCESS;
 }
@@ -109,7 +102,7 @@ static int command_bitcount(struct predis_ctx *ctx, struct predis_arg *data, cha
     return WRONG_ARG_COUNT;
   char *str;
   long length;
-  string_get(predis_arg_get(data, 0), &str, &length);
+  string_get(*predis_arg_get(data, 0), &str, &length);
 
   // long start = 0;
   // long end = length;
@@ -237,7 +230,7 @@ static long redisBitpos(void *s, unsigned long count, int bit) {
 static int command_bitpos(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
   long length;
-  string_get(predis_arg_get(data, 0), &str, &length);
+  string_get(*predis_arg_get(data, 0), &str, &length);
   long bp = redisBitpos(str, (unsigned long)length, (int)strtol(argv[1], NULL, 10));
   replyInt(ctx, (int)bp);
   return PREDIS_SUCCESS;
@@ -252,15 +245,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
 
   char *str_raw;
   long length;
-  struct string **str;
-  bool should_commit = predis_arg_try_initialize(data, 0, (void***)&str, NULL);
-  failed_commit:
-  string_exchange(str, &str_raw, &length, argv[1], argv_lengths[1]);
-  if (should_commit) {
-    should_commit = predis_arg_try_commit(data, 0, (void***)&str) != 0;
-    if (!should_commit)
-      goto failed_commit;
-  }
+  string_exchange(predis_arg_get(data, 0), &str_raw, &length, argv[1], argv_lengths[1]);
   replyBulkString(ctx, str_raw, length);
   return PREDIS_SUCCESS;
 }
@@ -268,7 +253,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
 static int command_strlen(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   char *str;
   long length;
-  string_get(predis_arg_get(data, 0), &str, &length);
+  string_get(*predis_arg_get(data, 0), &str, &length);
   replyInt(ctx, length);
   return 0;
 }
@@ -278,7 +263,7 @@ static const char sset_format[] = "W{string}S";
 static const char sget[] = "GET";
 static const char sget_format[] = "R{string}";
 static const char sgetset[] = "GETSET";
-static const char sgetset_format[] = "W{string}S";
+static const char sgetset_format[] = "M{string}S";
 static const char sbitcount[] = "BITCOUNT";
 static const char sbitcount_format[] = "R{string}";
 static const char sbitpos[] = "BITPOS";
@@ -331,13 +316,13 @@ c = write, non-existance mandatory
 */
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, sset, sizeof(sset), &command_set, sset_format, sizeof(sset_format) - 1);
-  register_command(magic_obj, sget, sizeof(sget), &command_get, sget_format, sizeof(sget_format) - 1);
-  register_command(magic_obj, sgetset, sizeof(sgetset), &command_getset, sgetset_format, sizeof(sgetset_format) - 1);
-  register_command(magic_obj, sbitcount, sizeof(sbitcount), &command_bitcount, sbitcount_format, sizeof(sbitcount_format) - 1);
-  register_command(magic_obj, sbitpos, sizeof(sbitpos), &command_bitpos, sbitpos_format, sizeof(sbitpos_format) - 1);
-  register_command(magic_obj, sstrlen, sizeof(sstrlen), &command_strlen, sstrlen_format, sizeof(sstrlen_format) - 1);
-  register_command(magic_obj, smget, sizeof(smget), &command_mget, smget_format, sizeof(smget_format) - 1);
+  register_command(magic_obj, sset, sizeof(sset) - 1, &command_set, sset_format, sizeof(sset_format) - 1);
+  register_command(magic_obj, sget, sizeof(sget) - 1, &command_get, sget_format, sizeof(sget_format) - 1);
+  register_command(magic_obj, sgetset, sizeof(sgetset) - 1, &command_getset, sgetset_format, sizeof(sgetset_format) - 1);
+  register_command(magic_obj, sbitcount, sizeof(sbitcount) - 1, &command_bitcount, sbitcount_format, sizeof(sbitcount_format) - 1);
+  register_command(magic_obj, sbitpos, sizeof(sbitpos) - 1, &command_bitpos, sbitpos_format, sizeof(sbitpos_format) - 1);
+  register_command(magic_obj, sstrlen, sizeof(sstrlen) - 1, &command_strlen, sstrlen_format, sizeof(sstrlen_format) - 1);
+  register_command(magic_obj, smget, sizeof(smget) - 1, &command_mget, smget_format, sizeof(smget_format) - 1);
   return 0;
 }
 

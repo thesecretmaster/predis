@@ -181,6 +181,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                   typed_data->type = fstring->contents[fstring_index].details.type;
                   typed_data->data = NULL;
                   data[i].data = typed_data;
+                  data[i].needs_commit = true;
                   data[i].needs_initialization = true;
                   break;
                 }
@@ -194,6 +195,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     break;
                   }
                   data[i].needs_initialization = false;
+                  data[i].needs_commit = false;
                   // The duplicate key case is the same as the good case
                   // because in both we're just making sure there's a reseved
                   // spot for the modify or create to happen later.
@@ -519,7 +521,7 @@ int main() {
   const char load_cmd_fstring[] = "S";
   command_ht_store(command_ht, load_cmd_name, sizeof(load_cmd_name), &load_structures, load_cmd_fstring, sizeof(load_cmd_fstring) - 1);
   struct predis_ctx ctx;
-  command_ht_store_meta(command_ht, "del", sizeof("del"), &command_del);
+  command_ht_store_meta(command_ht, "del", sizeof("del") - 1, &command_del);
   ctx.command_ht = command_ht;
   ctx.type_ht = type_ht;
   load_structures(&ctx, NULL, &((char*){"types/string.so"}), NULL, 1);

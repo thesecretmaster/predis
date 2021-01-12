@@ -11,9 +11,10 @@ enum command_errors {
 
 int register_command(struct predis_ctx *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *data_str, const unsigned int);
 
-void *predis_arg_get(struct predis_arg*, unsigned int idx);
+void **predis_arg_get(struct predis_arg*, unsigned int idx);
 bool predis_arg_try_initialize(struct predis_arg*, unsigned int idx, void ***val, void *initializer_args);
 int predis_arg_try_commit(struct predis_arg *arg, unsigned int idx, void ***val);
+bool predis_arg_requires_initialization(struct predis_arg *arg, unsigned int idx);
 
 int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len);
 int replySimpleString(struct predis_ctx *ctx, const char *ss);

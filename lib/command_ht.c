@@ -256,7 +256,7 @@ int command_ht_fetch(struct command_ht *ht, char *command_name, const unsigned i
       return 1;
   }
   if (ht->elements[index].command_name == NULL)
-    return 1;
+    return 2;
   *fstring = ht->elements[index].fstring;
   *command_func = ht->elements[index].command;
   *is_meta = ht->elements[index].is_meta;

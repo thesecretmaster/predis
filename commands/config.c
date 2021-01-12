@@ -21,6 +21,6 @@ static const char cmd_name[] = "CONFIG";
 static const char cmd_format[] = "SS";
 
 int predis_init(void *magic_obj) {
-  register_command(magic_obj, cmd_name, sizeof(cmd_name), &print1cmd, cmd_format, sizeof(cmd_format) - 1);
+  register_command(magic_obj, cmd_name, sizeof(cmd_name) - 1, &print1cmd, cmd_format, sizeof(cmd_format) - 1);
   return 0;
 }

@@ -24,42 +24,50 @@ s = string
 i = int
 */
 
-void *predis_arg_get(struct predis_arg *args, unsigned int idx) {
+void **predis_arg_get(struct predis_arg *args, unsigned int idx) {
   if (args[idx].needs_initialization) {
     printf("ERROR: Tried to get uninitialized or uncommitted arg\n");
     return NULL;
   }
-  return args[idx].data->data;
+  return &args[idx].data->data;
+}
+
+bool predis_arg_requires_initialization(struct predis_arg *arg, unsigned int idx) {
+  return __atomic_load_n((void**)arg[idx].ht_value, __ATOMIC_SEQ_CST) == NULL;
 }
 
 bool predis_arg_try_initialize(struct predis_arg *arg, unsigned int idx, void ***value, void *initializer_args) {
   if (!arg[idx].needs_initialization) {
-    printf("WARNING: Tried to get initialize an arg that didn't need initialization (this is fine if we're in a modify/create, it just means we hit the modify option of that)\n");
+    printf("WARNING: Tried to initialize an arg that didn't need initialization (this is fine if we're in a modify/create, it just means we hit the modify option of that)\n");
     if (value != NULL)
       *value = &(arg[idx].data->data);
     return false;
   }
+  arg[idx].needs_initialization = false;
   arg[idx].data->type->init(&(arg[idx].data->data), initializer_args);
   if (value != NULL)
     *value = &arg[idx].data->data;
-  return __atomic_load_n((void**)arg[idx].ht_value, __ATOMIC_SEQ_CST) == NULL;
+  return true;
 }
 
-int predis_arg_try_commit(struct predis_arg *arg, unsigned int idx, void ***value) {
+int predis_arg_try_commit(struct predis_arg *args, unsigned int idx, void ***value) {
+  if (args[idx].needs_initialization || !args[idx].needs_commit) {
+    printf("WARNING: Tried to commit an arg either did not need to be committed or had not been initialized\n");
+    return -2;
+  }
   void *nul = NULL;
-  arg[idx].needs_initialization = false;
   // printf("Committing value. Value is in %p\n", arg[idx].data);
-  if (__atomic_compare_exchange_n((void**)arg[idx].ht_value, &nul, arg[idx].data, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+  if (__atomic_compare_exchange_n((void**)args[idx].ht_value, &nul, args[idx].data, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
     // printf("We committed it! Now it's in %p\n", *(void**)arg[idx].ht_value);
     // arg[idx].data = *(struct predis_typed_data**)arg[idx].ht_value;
     if (value != NULL)
-      *value = &arg[idx].data->data;
+      *value = &args[idx].data->data;
     return 0;
-  } else if ((*(struct predis_typed_data**)(arg[idx].ht_value))->type == arg->data->type) {
+  } else if ((*(struct predis_typed_data**)(args[idx].ht_value))->type == args->data->type) {
     // printf("No. Bad\n");
-    arg[idx].data = *(struct predis_typed_data**)arg[idx].ht_value;
+    args[idx].data = *(struct predis_typed_data**)args[idx].ht_value;
     if (value != NULL)
-      *value = &arg[idx].data->data;
+      *value = &args[idx].data->data;
     return 1;
   } else {
     // printf("Very bad\n");
