@@ -9,3 +9,4 @@ unsigned int queue_length(struct queue *q);
 unsigned int queue_size(struct queue *q);
 void queue_close(struct queue *q);
 bool queue_closed(struct queue *q);
+void queue_free(struct queue *q);

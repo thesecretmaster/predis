@@ -40,15 +40,17 @@ struct format_string_node {
   enum format_string_access_type access_type;
 };
 
+#pragma GCC diagnostic pop
+
 struct format_string {
   struct format_string_node *contents;
   unsigned int length;
-  unsigned long optional_argument_count;
+  unsigned int optional_argument_count;
 };
 
-#pragma GCC diagnostic pop
 
 struct command_ht *command_ht_init(unsigned int size, struct type_ht *type_ht);
+void command_ht_free(struct command_ht *ht);
 
 int command_ht_store(struct command_ht *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *fstring, const unsigned int fstring_string_length);
 int command_ht_store_meta(struct command_ht *ht, const char *command_name, const unsigned int command_name_length, meta_command_func command);

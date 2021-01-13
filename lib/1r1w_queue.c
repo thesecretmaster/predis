@@ -49,6 +49,11 @@ struct queue *queue_init(unsigned int qlen, unsigned long elem_len) {
   return q;
 }
 
+void queue_free(struct queue *q) {
+  free(q->elements);
+  free(q);
+}
+
 void queue_close(struct queue *q) {
   q->closed = true;
 }

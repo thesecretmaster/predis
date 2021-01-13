@@ -44,7 +44,7 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
   printf("Right args\n");
   char *file_name = argv[0];
   void *dl_handle;
-  if ((dl_handle = dlopen(file_name, RTLD_NOW | RTLD_LOCAL)) == NULL) {
+  if ((dl_handle = dlopen(file_name, RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE)) == NULL) {
     printf("Bad dlopen %s %p %s\n", file_name, dl_handle, dlerror());
     return DLOPEN_FAILED;
   }
@@ -325,6 +325,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
     }
   } else {
     printf("Command %.*s not found (1 = notfound, %d)\n", (int)argv_lengths[0], argv[0], command_ht_rval);
+    replyError(ctx, "ERR unknown command");
   }
   if (ctx->needs_reply)
     replySimpleString(ctx, "OK");
@@ -444,6 +445,8 @@ static void *sender(void *_obj) {
       timer_stop(tint);
     }
   }
+  queue_free(obj->sending_queue);
+  queue_free(obj->processing_queue);
   printf("Sender exiting\n");
   // timer_print();
   return NULL;
@@ -465,10 +468,21 @@ static void *sender(void *_obj) {
 //   }
 //   return NULL;
 // }
+
+static struct command_ht *global_command_ht = NULL;
+static struct type_ht *global_type_ht = NULL;
+static struct ht_table *global_ht = NULL;
+
 #include <signal.h>
 static void sigint_handler(int i) __attribute__((noreturn));
 static void sigint_handler(__attribute__((unused)) int i) {
   printf("Exiting!\n");
+  if (global_command_ht != NULL)
+    command_ht_free(global_command_ht);
+  if (global_type_ht != NULL)
+    type_ht_free(global_type_ht);
+  if (global_ht != NULL)
+    ht_free(global_ht, NULL);
   exit(0);
 }
 
@@ -476,9 +490,13 @@ static const char load_cmd_name[] = "load";
 
 static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc) {
   struct ht_table *table = _global_ht_table;
-  for (int i = 0; i < argc; i++)
-    if (argv_lengths[i] > 0)
-      ht_del(table, argv[i], (unsigned int)argv_lengths[i], NULL);
+  for (int i = 0; i < argc; i++) {
+    if (argv_lengths[i] > 0) {
+      void *cts;
+      ht_del(table, argv[i], (unsigned int)argv_lengths[i], &cts);
+      // Add cts to the free list
+    }
+  }
   return 0;
 }
 
@@ -498,6 +516,7 @@ int main() {
   // AF_INET/AF_UNIX/AF_INET6 all work
   int socket_fd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
   if (socket_fd < 0) {
+    freeaddrinfo(addrinfo);
     printf("pad3\n");
     return 3;
   }
@@ -505,8 +524,10 @@ int main() {
   setsockopt(socket_fd, SOL_SOCKET ,SO_REUSEADDR, &tru, sizeof(int));
   if (bind(socket_fd, addrinfo->ai_addr, addrinfo->ai_addrlen) != 0) {
     printf("bad2\n");
+    freeaddrinfo(addrinfo);
     return 2;
   }
+  freeaddrinfo(addrinfo);
   if (listen(socket_fd, 10) != 0) {
     printf("bad4\n");
     return 4;
@@ -515,15 +536,15 @@ int main() {
   struct sockaddr_storage their_addr;
   socklen_t addr_size = sizeof(their_addr);
   pthread_t pid;
-  struct ht_table *global_ht = ht_init();
-  struct type_ht *type_ht = type_ht_init(256);
-  struct command_ht *command_ht = command_ht_init(256, type_ht);
+  global_ht = ht_init();
+  global_type_ht = type_ht_init(256);
+  global_command_ht = command_ht_init(256, global_type_ht);
   const char load_cmd_fstring[] = "S";
-  command_ht_store(command_ht, load_cmd_name, sizeof(load_cmd_name), &load_structures, load_cmd_fstring, sizeof(load_cmd_fstring) - 1);
+  command_ht_store(global_command_ht, load_cmd_name, sizeof(load_cmd_name), &load_structures, load_cmd_fstring, sizeof(load_cmd_fstring) - 1);
   struct predis_ctx ctx;
-  command_ht_store_meta(command_ht, "del", sizeof("del") - 1, &command_del);
-  ctx.command_ht = command_ht;
-  ctx.type_ht = type_ht;
+  command_ht_store_meta(global_command_ht, "del", sizeof("del") - 1, &command_del);
+  ctx.command_ht = global_command_ht;
+  ctx.type_ht = global_type_ht;
   load_structures(&ctx, NULL, &((char*){"types/string.so"}), NULL, 1);
   load_structures(&ctx, NULL, &((char*){"types/hash.so"}), NULL, 1);
   load_structures(&ctx, NULL, &((char*){"commands/string.so"}), NULL, 1);
@@ -542,8 +563,8 @@ int main() {
     obj->processing_queue = queue_init(50, sizeof(struct resp_allocations*));
     obj->sending_queue = queue_init(50, sizeof(struct pre_send));
     assert(obj->sending_queue != NULL);
-    obj->command_ht = command_ht;
-    obj->type_ht = type_ht;
+    obj->command_ht = global_command_ht;
+    obj->type_ht = global_type_ht;
     pthread_create(&pid, NULL, packet_reciever_queue, obj);
     pthread_create(&pid, NULL, runner_queue, obj);
     pthread_create(&pid, NULL, sender, obj);

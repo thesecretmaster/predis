@@ -1,5 +1,9 @@
 struct ht_table;
+
+typedef void (*ht_free_func)(void*);
+
 struct ht_table *ht_init(void);
+void ht_free(struct ht_table *table, ht_free_func ff);
 
 enum HT_RETURN_STATUS {
   HT_GOOD = 0,

@@ -39,8 +39,20 @@ struct command_ht *command_ht_init(unsigned int size, struct type_ht *type_ht) {
     ht->elements[i].command_name = NULL;
     ht->elements[i].command_name_length = 0;
     ht->elements[i].command.ptr = NULL;
+    ht->elements[i].fstring = NULL;
   }
   return ht;
+}
+
+void command_ht_free(struct command_ht *ht) {
+  for (unsigned int i = 0; i < ht->size; i++) {
+    if (ht->elements[i].fstring != NULL) {
+      free(ht->elements[i].fstring->contents);
+      free(ht->elements[i].fstring);
+    }
+  }
+  free(ht->elements);
+  free(ht);
 }
 
 // https://stackoverflow.com/a/7666577/4948732
@@ -77,7 +89,7 @@ static int parse_format_string(struct type_ht *type_ht, const char *str, const u
   unsigned int fstring_length = 0;
   bool expect_type;
   long optargs_count_raw;
-  unsigned long optargs_count = 0;
+  unsigned int optargs_count = 0;
   char *optargs_end;
   int jmp_target = -1;
   bool allocate_node;
@@ -141,7 +153,7 @@ static int parse_format_string(struct type_ht *type_ht, const char *str, const u
         optargs_count_raw = strtol(str + stridx + 1, &optargs_end, 10);
         if (optargs_count_raw < 0)
           return -5;
-        optargs_count = (unsigned long)optargs_count_raw;
+        optargs_count = (unsigned int)optargs_count_raw;
         expect_type = false;
         if (optargs_end != str + stridx)
           return -4; // gotta end at the end

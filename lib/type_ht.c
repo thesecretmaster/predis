@@ -38,6 +38,11 @@ struct type_ht *type_ht_init(unsigned int size) {
   return ht;
 }
 
+void type_ht_free(struct type_ht *ht) {
+  free(ht->elements);
+  free(ht);
+}
+
 // https://stackoverflow.com/a/7666577/4948732
 // Slightly modified to take length argument.
 static unsigned long

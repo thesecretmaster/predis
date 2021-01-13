@@ -14,7 +14,8 @@ static int initialize_hash(void **ht_ptr, void *_hargs) {
 }
 
 static int free_hash(void *_ht) {
-  printf("lol can't free hashes\n");
+  struct ht_table *ht = _ht;
+  ht_free(ht, NULL);
   return 0;
 }
 

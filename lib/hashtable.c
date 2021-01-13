@@ -133,6 +133,26 @@ struct ht_table *ht_init() {
   return table;
 }
 
+void ht_free(struct ht_table *table, ht_free_func free_node) {
+  struct ht_node *node = table->buckets[0][0];
+  struct ht_node *tmp;
+  while (node != NULL) {
+    tmp = node;
+    if (node->key != NULL && free_node != NULL)
+      free_node(node->contents.value);
+    node = node->next;
+    // yeeaaaahhhh we should probably clean that node as well
+    free(tmp);
+  }
+  for (unsigned long i = 0; i < CHAR_BIT * sizeof(struct ht_node*); i++)
+    free(table->buckets[i]);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-qual"
+  free((void*)table->buckets);
+#pragma GCC diagnostic pop
+  free(table);
+}
+
 #ifndef HT_TEST_API
 static inline
 #endif
