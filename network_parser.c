@@ -19,6 +19,7 @@
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
 #include "lib/timer.h"
+#include "lib/gc.h"
 #include <assert.h>
 
 #pragma GCC diagnostic push
@@ -124,7 +125,7 @@ static void *packet_reciever_queue(void *_cdata) {
 
 #include "predis_arg_impl.c"
 
-static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct timer *timer) {
+static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct timer *timer, struct gc_group *gcg) {
   timer_interval *tint;
   tint = timer_start_interval(timer, INTERVAL_RUNNING, resp_get_tag(resp_allocs));
   char **argv;
@@ -143,6 +144,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   bool command_is_meta;
   long fstring_index;
   struct predis_typed_data *typed_data;
+  struct gc_working_set *working_set;
   resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
   argc = (unsigned long)argc_raw;
   ctx->needs_reply = true;
@@ -152,7 +154,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
     printf("Argument error\n");
   } else if ((command_ht_rval = command_ht_fetch(command_ht, argv[0], (unsigned int)argv_lengths[0], &fstring, &cmd, &command_is_meta)) == 0) {
     if (command_is_meta) {
-      cmd.meta(ctx, table, argv + 1, argv_lengths + 1, (int)argc);
+      cmd.meta(ctx, table, argv + 1, argv_lengths + 1, ((int)argc) - 1, gcg);
     } else {
       if (fstring->length + fstring->optional_argument_count + 1 > argc) {
         printf("Length wrong! Fstring: %u / Argc: %lu\n", fstring->length, argc);
@@ -168,6 +170,10 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
           data = malloc(sizeof(struct predis_arg) * argc);
         }
         fstring_index = 0;
+        gc_lock(gcg);
+        working_set = malloc(sizeof(struct gc_working_set) + sizeof(void*)*argc);
+        working_set->length = argc;
+        memset(&working_set->members, (int)NULL, sizeof(void*)*argc);
         for (unsigned long i = 0; i < argc; i++) {
           data[i].ht_value = NULL;
           data[i].data = NULL;
@@ -178,6 +184,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
               switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
                 case HT_GOOD: {
                   typed_data = malloc(sizeof(struct predis_typed_data));
+                  working_set->members[i] = typed_data;
                   typed_data->type = fstring->contents[fstring_index].details.type;
                   typed_data->data = NULL;
                   data[i].data = typed_data;
@@ -194,6 +201,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_resolved = true;
                     break;
                   }
+                  working_set->members[i] = data[i].data;
                   data[i].needs_initialization = false;
                   data[i].needs_commit = false;
                   // The duplicate key case is the same as the good case
@@ -235,6 +243,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_resolved = true;
                     break;
                   }
+                  working_set->members[i] = data[i].data;
                   break;
                 }
               }
@@ -265,6 +274,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_happened = true;
                     break;
                   }
+                  working_set->members[i] = data[i].data;
                   break;
                 }
               }
@@ -304,6 +314,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             break;
           fstring_index += 1;
         }
+        gc_commit(gcg, working_set);
         // Fetch data, run preload, schedule, enqueue <- wow so out of date
         if (!error_happened) {
           switch(cmd.normal(ctx, data, ptrs, ptrs_lengths, (int)argc)) {
@@ -313,6 +324,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             }
           }
         }
+        gc_clear(gcg);
         if (data != data_stack)
           free(data);
       }
@@ -341,6 +353,7 @@ static void *runner_queue(void *_cdata) {
   struct resp_allocations *resp_allocs;
   struct predis_ctx ctx;
   int qpop_rval = 0;
+  struct gc_group *gc = gc_register_user();
   ctx.command_ht = cdata->command_ht;
   ctx.reply_fd = cdata->nonblock_fd;
   ctx.sending_queue = cdata->sending_queue;
@@ -360,7 +373,7 @@ static void *runner_queue(void *_cdata) {
         continue;
       }
     }
-    runner(&ctx, resp_allocs, cdata->command_ht, cdata->global_ht, timer);
+    runner(&ctx, resp_allocs, cdata->command_ht, cdata->global_ht, timer, gc);
   } while (!queue_closed(queue));
   queue_close(cdata->sending_queue);
   printf("Runner exiting\n");
@@ -452,6 +465,19 @@ static void *sender(void *_obj) {
   return NULL;
 }
 
+struct gc_data {
+  volatile bool stop;
+};
+
+static void *gc_thread(void *_gc_data) {
+  struct gc_data *data = _gc_data;
+  while (!data->stop) {
+    sched_yield();
+    gc_run();
+  }
+  return NULL;
+}
+
 // #include <sys/ioctl.h>
 // static void *qchecker(void *_q) {
 //   struct conn_data *q = _q;
@@ -488,15 +514,22 @@ static void sigint_handler(__attribute__((unused)) int i) {
 
 static const char load_cmd_name[] = "load";
 
-static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc) {
+static void free_typed_data(void *_data) {
+  struct predis_typed_data *data = _data;
+  data->type->free(data->data);
+}
+
+static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc, struct gc_group *gcg) {
   struct ht_table *table = _global_ht_table;
+  gc_lock(gcg);
   for (int i = 0; i < argc; i++) {
     if (argv_lengths[i] > 0) {
       void *cts;
       ht_del(table, argv[i], (unsigned int)argv_lengths[i], &cts);
-      // Add cts to the free list
+      gc_free(cts, free_typed_data);
     }
   }
+  gc_commit(gcg, NULL);
   return 0;
 }
 
@@ -536,6 +569,10 @@ int main() {
   struct sockaddr_storage their_addr;
   socklen_t addr_size = sizeof(their_addr);
   pthread_t pid;
+  gc_initialize();
+  struct gc_data *gc_data = malloc(sizeof(struct gc_data));
+  gc_data->stop = false;
+  pthread_create(&pid, NULL, gc_thread, gc_data);
   global_ht = ht_init();
   global_type_ht = type_ht_init(256);
   global_command_ht = command_ht_init(256, global_type_ht);

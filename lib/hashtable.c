@@ -45,6 +45,27 @@ struct ht_table {
 
 #pragma GCC diagnostic pop
 
+#ifdef HT_ITERABLE
+struct ht_iterable *ht_head(struct ht_table *table) {
+  struct ht_node *node = table->buckets[0][0];
+  return (struct ht_iterable*)node;
+}
+
+struct ht_iterable *ht_next(struct ht_iterable *i) {
+  struct ht_node *n = (struct ht_node*)i;
+  n = n->next;
+  while (n->key == NULL && n != NULL) {
+    n = n->next;
+  }
+  return (struct ht_iterable *)n;
+}
+
+void *ht_value(struct ht_iterable *i) {
+  struct ht_node *n = (struct ht_node*)i;
+  return n->contents.value;
+}
+#endif
+
 #ifdef HT_TEST_API
 
 static __thread unsigned long last_allocation_size = 0;

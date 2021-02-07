@@ -22,8 +22,11 @@ tmp/%_ht.o: lib/%_ht.c
 tmp/commands.o: lib/commands.c
 	$(CC) $(ALL_FLAGS) -c $^ -o $@
 
-bin/server: network_parser.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o lib/hashtable.c lib/1r1w_queue.c lib/timer.c
-	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="struct predis_data*" -ldl -pthread $^ -o $@
+tmp/full_ht.o: lib/hashtable.c
+	$(CC) $(ALL_FLAGS) -DHT_ITERABLE -c $^ -o $@
+
+bin/server: network_parser.c lib/gc.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
+	$(CC) $(ALL_FLAGS) -ldl -pthread $^ -o $@
 
 commands/string.so: types/string.so
 commands/hash.so: types/hash.so

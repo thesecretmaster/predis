@@ -27,6 +27,13 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
 enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 
+#ifdef HT_ITERABLE
+struct ht_iterable;
+struct ht_iterable *ht_head(struct ht_table *table);
+struct ht_iterable *ht_next(struct ht_iterable *i);
+void *ht_value(struct ht_iterable *i);
+#endif
+
 #ifdef HT_TEST_API
 struct ht_node;
 unsigned long ht_last_allocation_size(void);

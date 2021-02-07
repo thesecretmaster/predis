@@ -11,7 +11,8 @@ static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **a
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
   struct string **str;
-  struct string_args str_args = {.len = argv_lengths[1], .str = argv[1]};
+  struct string_args str_args = {.len = argv_lengths[1], .str = malloc(sizeof(char) * argv_lengths[1])};
+  memcpy(str_args.str, argv[1], argv_lengths[1]);
   retry:
   if (predis_arg_requires_initialization(data, 0)) {
     predis_arg_try_initialize(data, 0, (void***)&str, &str_args);
