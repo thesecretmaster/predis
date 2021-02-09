@@ -1,0 +1,4 @@
+--fair-sched=yes
+--leak-check=full
+--show-leak-kinds=all
+--suppressions=vg_supressions.supp
