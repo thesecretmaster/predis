@@ -21,12 +21,12 @@ static int free_hash(void *_ht) {
 
 int hash_store(struct hash *table, const char *key, const unsigned int key_length, char *value) {
   void *value_dup = value;
-  return ht_store((struct ht_table*)table, key, key_length, &value_dup);
+  return ht_store((struct ht_table*)table, key, key_length, &value_dup, NULL);
 }
 
 int hash_find(struct hash *table, const char *key, const unsigned int key_length, char **value) {
   void *ht_value;
-  switch (ht_find((struct ht_table*)table, key, key_length, &ht_value)) {
+  switch (ht_find((struct ht_table*)table, key, key_length, &ht_value, NULL)) {
     case HT_GOOD:
     case HT_DUPLICATE_KEY: {
       *value = *((char**)ht_value);

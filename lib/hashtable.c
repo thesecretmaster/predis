@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <sys/sysinfo.h>
 #include "hashtable.h"
+#include "gc.h"
 
 #ifdef HT_TEST_API
 #include <stdio.h>
@@ -354,7 +355,7 @@ static inline enum HT_RETURN_STATUS ht_store_alloc_node(struct ht_node **new_nod
   return HT_GOOD;
 }
 
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value) {
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value, void **gc_value) {
   if (key == NULL || key_length <= 0)
     return HT_BADARGS;
   if (table->element_count > (0x1 << table->bitlen)) {
@@ -379,6 +380,8 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
   while (n->key_hash == key_hash) {
     if (ht_key_cmp(key, key_length, n)) {
       *value = &(n->contents.value);
+      if (gc_value != NULL)
+        *gc_value = n;
       return HT_DUPLICATE_KEY;
     }
     p = n;
@@ -395,10 +398,12 @@ enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const un
   }
   __atomic_fetch_add(&table->element_count, 1, __ATOMIC_SEQ_CST);
   *value = &(new_node->contents.value);
+  if (gc_value != NULL)
+    *gc_value = new_node;
   return HT_GOOD;
 }
 
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value) {
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value, void **gc_value) {
   unsigned int key_hash = ht_hash(key, key_length);
   struct ht_node *p = ht_get_sentinel(table, key_hash, false, NULL);
   struct ht_node *n = p->next;
@@ -410,12 +415,20 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const uns
   while (n->key_hash == key_hash) {
     if (ht_key_cmp(key, key_length, n)) {
       *value = &(n->contents.value);
+      if (gc_value != NULL)
+        *gc_value = n;
       return HT_GOOD;
     }
     p = n;
     n = __atomic_load_n(&n->next, __ATOMIC_SEQ_CST);
   }
   return HT_NOT_FOUND;
+}
+
+static void ht_free_node_gc(void *_node) {
+  struct ht_node *node = _node;
+  free(node->key);
+  free(node);
 }
 
 enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, void **value) {
@@ -434,10 +447,7 @@ enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsi
       if (__atomic_compare_exchange_n(&(p->next), &n, n->next, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         if (value != NULL)
           *value = n->contents.value;
-        // TODO: We can't actually free the node because something else might need it
-        // Really we need to add it to the GC list
-        // free(n->key);
-        // free(n);
+        gc_free(n, ht_free_node_gc);
         return HT_GOOD;
       } else {
         p = sentinel;

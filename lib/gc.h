@@ -51,7 +51,11 @@ void gc_commit(struct gc_group*, struct gc_working_set *working_set);
 void gc_clear(struct gc_group*);
 void gc_run(void); // This probably shouldn't be run concurrently because
                    // it will spuriously fail to free things
+                   // Also because ht_del now adds things to the GC list
+                   // it will legit break stuff wrt reading freed memory
+                   // So I put a mutex on it
 void gc_free(void *ptr, gc_free_func free_func);
 void gc_initialize(void); // THIS MUST BE CALLED BEFORE ANYTHING IS FREED
+void gc_cleanup(void);
 
 #endif

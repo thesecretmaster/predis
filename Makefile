@@ -33,15 +33,12 @@ commands/hash.so: types/hash.so
 commands/%.so: commands/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
-types/hash.so: tmp/type_hash_hashtable.o
+types/hash.so: tmp/full_ht.o lib/gc.c
 types/%.so: types/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 tmp/hashtable.%.o: lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -DHT_VALUE_TYPE="$*" -c $^ -o $@
-
-tmp/type_hash_hashtable.o: lib/hashtable.c
-	$(CC) $(ALL_FLAGS) -DTYPE_HASH -c $^ -o $@
 
 strsearch: strsearch.c
 	$(CC) $(DEBUG_FLAGS) $(SPEED_FLAGS) -Wall $^ -o $@

@@ -23,8 +23,8 @@ value -> - void *value -> actual value (struct string or smth)
 
 HOWEVER for ht_del (void*)value -> actual value
 */
-enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
-enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
+enum HT_RETURN_STATUS ht_store(struct ht_table *table, const char *key, const unsigned int key_length, void **value, void **gc_value);
+enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const unsigned int key_length, void **value, void **gc_value);
 enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsigned int key_length, void **value);
 
 #ifdef HT_ITERABLE

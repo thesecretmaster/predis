@@ -68,6 +68,9 @@
 #include <stdlib.h>
 #include <sched.h>
 #include <stdint.h>
+#include <pthread.h>
+
+static pthread_mutex_t gc_run_lock;
 
 struct gc_group {
   volatile bool pending;
@@ -96,10 +99,15 @@ static void gc_ht_free_func(void *_ptr) {
 }
 
 void gc_initialize() {
+  pthread_mutex_init(&gc_run_lock, NULL);
   struct ht_table *table = ht_init();
   struct ht_table *nul = NULL;
   if (!__atomic_compare_exchange_n(&gc_state.free_list, &nul, table, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
     ht_free(table, gc_ht_free_func);
+}
+
+void gc_cleanup() {
+  ht_free(gc_state.free_list, NULL);
 }
 
 struct gc_group *gc_register_user() {
@@ -145,7 +153,7 @@ void gc_free(void *ptr, gc_free_func free_func) {
   fl_elem->free_func = free_func;
   fl_elem->used = gc_state.used_ctr;
   char *cptr = (char*)&ptr;
-  ht_store(gc_state.free_list, cptr, sizeof(ptr), (void**)&fl_elem);
+  ht_store(gc_state.free_list, cptr, sizeof(ptr), (void**)&fl_elem, NULL);
   // struct gc_free_list_elem *head;
   // do {
   //   head = gc_state.free_list;
@@ -154,6 +162,7 @@ void gc_free(void *ptr, gc_free_func free_func) {
 }
 
 void gc_run() {
+  pthread_mutex_lock(&gc_run_lock);
   // struct gc_free_list_elem *free_list_tail = __atomic_exchange_n(&gc_state.free_list, NULL, __ATOMIC_SEQ_CST);
   struct gc_group *group = __atomic_load_n(&gc_state.groups, __ATOMIC_SEQ_CST);
   struct gc_working_set *working_set;
@@ -178,7 +187,7 @@ void gc_run() {
         if (working_set->members[i] == NULL)
           continue;
         cptr = (char*)&working_set->members[i];
-        if (ht_find(gc_state.free_list, cptr, sizeof(working_set->members[i]), (void**)&elem) == HT_GOOD) {
+        if (ht_find(gc_state.free_list, cptr, sizeof(working_set->members[i]), (void**)&elem, NULL) == HT_GOOD) {
           __atomic_store_n(&elem->used, ctr, __ATOMIC_SEQ_CST);
         }
       }
@@ -202,4 +211,5 @@ void gc_run() {
     }
     n = ht_next(n);
   }
+  pthread_mutex_unlock(&gc_run_lock);
 }

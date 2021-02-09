@@ -60,6 +60,7 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
   ifunc(sctx);
 
   free(sctx);
+  dlclose(dl_handle);
 
   return PREDIS_SUCCESS;
 }
@@ -145,6 +146,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   long fstring_index;
   struct predis_typed_data *typed_data;
   struct gc_working_set *working_set;
+  void *gc_value;
   resp_cmd_args(resp_allocs, &argc_raw, &argv, &argv_lengths);
   argc = (unsigned long)argc_raw;
   ctx->needs_reply = true;
@@ -171,9 +173,9 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
         }
         fstring_index = 0;
         gc_lock(gcg);
-        working_set = malloc(sizeof(struct gc_working_set) + sizeof(void*)*argc);
-        working_set->length = argc;
-        memset(&working_set->members, (int)NULL, sizeof(void*)*argc);
+        working_set = malloc(sizeof(struct gc_working_set) + sizeof(void*)*argc*2);
+        working_set->length = argc*2;
+        memset(&working_set->members, (int)NULL, sizeof(void*)*working_set->length);
         for (unsigned long i = 0; i < argc; i++) {
           data[i].ht_value = NULL;
           data[i].data = NULL;
@@ -181,10 +183,11 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
           switch(i > fstring->length ? FSTRING_STRING : fstring->contents[fstring_index].access_type) {
             case FSTRING_MODIFY_CREATE: {
               // printf("Small c in %d %s\n", i, ptrs[i]);
-              switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
+              switch (ht_store(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value), &gc_value)) {
                 case HT_GOOD: {
                   typed_data = malloc(sizeof(struct predis_typed_data));
-                  working_set->members[i] = typed_data;
+                  working_set->members[i*2] = typed_data;
+                  working_set->members[i*2 + 1] = gc_value;
                   typed_data->type = fstring->contents[fstring_index].details.type;
                   typed_data->data = NULL;
                   data[i].data = typed_data;
@@ -201,7 +204,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_resolved = true;
                     break;
                   }
-                  working_set->members[i] = data[i].data;
+                  working_set->members[i*2] = data[i].data;
+                  working_set->members[i*2 + 1] = gc_value;
                   data[i].needs_initialization = false;
                   data[i].needs_commit = false;
                   // The duplicate key case is the same as the good case
@@ -222,7 +226,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             case FSTRING_READONLY: {
               // printf("Big R in %d %s\n", i, ptrs[i]);
               data[i].needs_initialization = false;
-              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
+              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value), &gc_value)) {
                 case HT_NOT_FOUND: {
                   // printf("Not found in READONLY\n");
                   error_happened = true;
@@ -243,7 +247,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_resolved = true;
                     break;
                   }
-                  working_set->members[i] = data[i].data;
+                  working_set->members[i*2] = data[i].data;
+                  working_set->members[i*2 + 1] = gc_value;
                   break;
                 }
               }
@@ -255,7 +260,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
             }
             case FSTRING_READONLY_OPTIONAL: {
               data[i].needs_initialization = false;
-              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value))) {
+              switch (ht_find(table, ptrs[i], (unsigned int)ptrs_lengths[i], &(data[i].ht_value), &gc_value)) {
                 case HT_NOT_FOUND: {
                   data[i].data = NULL;
                   data[i].ht_value = NULL;
@@ -274,7 +279,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                     error_happened = true;
                     break;
                   }
-                  working_set->members[i] = data[i].data;
+                  working_set->members[i*2] = data[i].data;
+                  working_set->members[i*2 + 1] = gc_value;
                   break;
                 }
               }
@@ -471,10 +477,13 @@ struct gc_data {
 
 static void *gc_thread(void *_gc_data) {
   struct gc_data *data = _gc_data;
+  printf("Launched GC\n");
   while (!data->stop) {
     sched_yield();
     gc_run();
   }
+  free(data);
+  printf("Exited GC!\n");
   return NULL;
 }
 
@@ -498,17 +507,22 @@ static void *gc_thread(void *_gc_data) {
 static struct command_ht *global_command_ht = NULL;
 static struct type_ht *global_type_ht = NULL;
 static struct ht_table *global_ht = NULL;
+static struct gc_data *gc_data = NULL;
+static pthread_t gc_pid;
 
 #include <signal.h>
 static void sigint_handler(int i) __attribute__((noreturn));
 static void sigint_handler(__attribute__((unused)) int i) {
-  printf("Exiting!\n");
   if (global_command_ht != NULL)
     command_ht_free(global_command_ht);
   if (global_type_ht != NULL)
     type_ht_free(global_type_ht);
   if (global_ht != NULL)
     ht_free(global_ht, NULL);
+  if (gc_data != NULL) {
+    free(gc_data);
+  }
+  gc_cleanup();
   exit(0);
 }
 
@@ -570,9 +584,9 @@ int main() {
   socklen_t addr_size = sizeof(their_addr);
   pthread_t pid;
   gc_initialize();
-  struct gc_data *gc_data = malloc(sizeof(struct gc_data));
+  gc_data = malloc(sizeof(struct gc_data));
   gc_data->stop = false;
-  pthread_create(&pid, NULL, gc_thread, gc_data);
+  pthread_create(&gc_pid, NULL, gc_thread, gc_data);
   global_ht = ht_init();
   global_type_ht = type_ht_init(256);
   global_command_ht = command_ht_init(256, global_type_ht);
