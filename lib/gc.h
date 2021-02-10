@@ -41,7 +41,7 @@ happens, the gc_runner can skip checking the rest of that threads working set.
 typedef void (*gc_free_func)(void*);
 struct gc_group;
 struct gc_working_set {
-  int length;
+  unsigned long length;
   void *members[]; // "FAM" or flexible array member, can be any length
 };
 

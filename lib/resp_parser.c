@@ -6,12 +6,24 @@
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <poll.h>
 
 #ifdef RESP_PARSER_USE_DW
 
 #include "resp_parser_dw.c"
 
 #endif // RESP_PARSER_USE_DW
+
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
+
+struct resp_spare_page {
+  char *page;
+  unsigned int size;
+};
+
+#pragma GCC diagnostic pop
 
 static void print_raw(char *s) {
   while (*s != '\0') {
@@ -26,17 +38,36 @@ static void print_raw(char *s) {
   printf("\n");
 }
 
+struct resp_reciever_data {
+  struct resp_spare_page spare_page;
+  int fd;
+  unsigned int pollfds_length;
+  struct pollfd pollfds[];
+};
+
+int resp_reciever_label(struct resp_reciever_data *rrd) {
+  return rrd->fd;
+}
+
+static inline int rp_recieve(struct resp_reciever_data *fd_data, void *buff, size_t len, int flags) {
+  return recv(fd_data->fd, buff, len, flags);
+}
+
+struct resp_reciever_data *resp_initialize_reciever(int fd) {
+  unsigned int pollfds_length = 1;
+  struct resp_reciever_data *d = malloc(sizeof(struct resp_reciever_data) + sizeof(struct pollfd) * pollfds_length);
+  d->fd = fd;
+  d->spare_page.size = 0;
+  d->spare_page.page = NULL;
+  d->pollfds_length = pollfds_length;
+  d->pollfds[0].fd = fd;
+  d->pollfds[0].events = POLLIN;
+  return d;
+}
+
 #define BUFSIZE 256
 static const char bs_end[] = "\r\n";
 // static const char *cmd_proc_net_err = "cmd_proc network error";
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpadded"
-
-struct resp_spare_page {
-  char *page;
-  unsigned int size;
-};
 
 struct resp_allocations {
   char **allocations;
@@ -46,8 +77,6 @@ struct resp_allocations {
   int allocation_count;
   unsigned int tag;
 };
-
-#pragma GCC diagnostic pop
 
 struct resp_allocations *resp_cmd_init(unsigned int tag) {
   struct resp_allocations *allocs = malloc(sizeof(struct resp_allocations));
@@ -63,14 +92,7 @@ unsigned int resp_get_tag(struct resp_allocations *allocs) {
   return allocs->tag;
 }
 
-struct resp_spare_page *resp_cmd_init_spare_page() {
-  struct resp_spare_page *page = malloc(sizeof(struct resp_spare_page));
-  page->size = 0;
-  page->page = NULL;
-  return page;
-}
-
-static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, bulkstring_size_t *argc) {
+static int process_length_internal(struct resp_reciever_data *fd_data, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, bulkstring_size_t *argc) {
   char *buf_ptr;
   ssize_t recv_val;
   unsigned int copy_length;
@@ -92,7 +114,7 @@ static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buf
       // printf("loopi\n");
       if (current_buffer_length < BUFSIZE) {
         // printf("moar recv in loopi (cbl: %d)\n", current_buffer_length);
-        recv_val = recv(fd, current_buffer + current_buffer_length, (size_t)(BUFSIZE - current_buffer_length), 0x0);
+        recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, (size_t)(BUFSIZE - current_buffer_length), 0x0);
         if (recv_val <= 0)
           return -1; // Network error
         // printf("recv %d bytes\n", recv_val);
@@ -110,7 +132,7 @@ static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buf
         *new_page = malloc(BUFSIZE + 1);
         (*new_page)[BUFSIZE] = '\0';
         memcpy(*new_page, buf_ptr_orig, copy_length);
-        recv_val = recv(fd, (*new_page) + copy_length, BUFSIZE - copy_length, 0x0);
+        recv_val = rp_recieve(fd_data, (*new_page) + copy_length, BUFSIZE - copy_length, 0x0);
         if (recv_val <= 0)
           return -2;
         *new_page_length = (unsigned int)recv_val + copy_length;
@@ -129,17 +151,18 @@ static int process_length_internal(int fd, char *buf_ptr_orig, char *current_buf
   return 0;
 }
 
-int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp_spare_page * const spare_page) {
+int resp_cmd_process(struct resp_reciever_data *fd_data, struct resp_allocations * const allocs) {
   unsigned int copy_length;
   // Setup first buffer or use spare page buffer
   // Read "*<length>\r\n"
   char *current_buffer;
   unsigned int current_buffer_length;
   ssize_t recv_val;
+  struct resp_spare_page *spare_page = &fd_data->spare_page;
   if (spare_page->page == NULL) {
     current_buffer = malloc(BUFSIZE + 1);
     current_buffer[BUFSIZE] = '\0';
-    recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+    recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
     if (recv_val <= 0)
       return -1; // Network error
     current_buffer_length = (unsigned int)recv_val;
@@ -164,7 +187,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
   char *fresh_page;
   char *fresh_page_ptr;
   unsigned int fresh_page_length;
-  if (process_length_internal(fd, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &argc_raw) != 0)
+  if (process_length_internal(fd_data, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &argc_raw) != 0)
     return -3;
   if (argc_raw <= 0) // TODO: We can't return 0 early, we need to handle all the spare page cleanup
     return 0;
@@ -206,13 +229,13 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
         allocs->allocations[allocs->allocation_count] = current_buffer;
         allocs->allocation_count += 1;
         buf_ptr = current_buffer;
-        recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+        recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
         if (recv_val <= 0)
           return -4;
         current_buffer_length = (unsigned int)recv_val;
       } else {
         // printf("C2\n");
-        recv_val = recv(fd, current_buffer + current_buffer_length, BUFSIZE - current_buffer_length, 0x0);
+        recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, BUFSIZE - current_buffer_length, 0x0);
         if (recv_val <= 0)
           return -5;
         current_buffer_length += recv_val;
@@ -225,7 +248,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       return -6; // Expected a bulkstring and didn't get one
     // Length reading loop
     buf_ptr += 1; // Eat the '$'
-    if (process_length_internal(fd, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &bs_length) != 0)
+    if (process_length_internal(fd_data, buf_ptr, current_buffer, current_buffer_length, &fresh_page_ptr, &fresh_page, &fresh_page_length, &bs_length) != 0)
       return -7;
     allocs->argv_lengths[i] = bs_length;
     buf_ptr = fresh_page_ptr;
@@ -266,7 +289,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       // printf("cbuflen: %d\n", current_buffer_length);
       allocs->argv[i] = buf_ptr;
       assert((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length) >= 0);
-      recv_val = recv(fd, current_buffer + current_buffer_length, (size_t)((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length)), MSG_WAITALL);
+      recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, (size_t)((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length)), MSG_WAITALL);
       if (recv_val <= 0)
         return -8;
       current_buffer_length += recv_val;
@@ -283,7 +306,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       allocs->allocation_count += 1;
       memcpy(current_buffer, buf_ptr, copy_length);
       assert((bs_length + 2) >= copy_length);
-      recv_val = recv(fd, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
+      recv_val = rp_recieve(fd_data, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
       if (recv_val <= 0)
         return -9;
       allocs->argv[i] = current_buffer;
@@ -299,7 +322,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       allocs->allocations[allocs->allocation_count] = current_buffer;
       allocs->allocation_count += 1;
       memcpy(current_buffer, buf_ptr, copy_length);
-      recv_val = recv(fd, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
+      recv_val = rp_recieve(fd_data, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
       if (recv_val <= 0)
         return -9;
       *(current_buffer + bs_length) = '\0';
@@ -310,7 +333,7 @@ int resp_cmd_process(int fd, struct resp_allocations * const allocs, struct resp
       allocs->allocations[allocs->allocation_count] = current_buffer;
       allocs->allocation_count += 1;
       buf_ptr = current_buffer;
-      recv_val = recv(fd, current_buffer, BUFSIZE, 0x0);
+      recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
       if (recv_val <= 0)
         return -4;
       current_buffer_length = (unsigned int)recv_val;

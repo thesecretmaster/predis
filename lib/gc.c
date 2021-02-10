@@ -70,17 +70,18 @@
 #include <stdint.h>
 #include <pthread.h>
 
-static pthread_mutex_t gc_run_lock;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
 
 struct gc_group {
-  volatile bool pending;
   struct gc_working_set * volatile working_set;
   struct gc_group * volatile next;
+  volatile bool pending;
 };
 
 struct gc_free_list_elem {
-  gc_free_func free_func;
   void *ptr;
+  gc_free_func free_func;
   volatile int used;
   // struct gc_free_list_elem * volatile next;
 };
@@ -91,6 +92,9 @@ struct gc_global_state {
   volatile int used_ctr;
 };
 
+#pragma GCC diagnostic pop
+
+static pthread_mutex_t gc_run_lock;
 static volatile struct gc_global_state gc_state = (struct gc_global_state){.groups = NULL, .free_list = NULL, .used_ctr = 0};
 
 static void gc_ht_free_func(void *_ptr) {
@@ -183,7 +187,7 @@ void gc_run() {
     } while (!__atomic_compare_exchange_n(&group->working_set, &working_set, new_working_set, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
     if (working_set != NULL) {
       // test all things in the working set against the free list
-      for (int i = 0; i < working_set->length; i++) {
+      for (unsigned i = 0; i < working_set->length; i++) {
         if (working_set->members[i] == NULL)
           continue;
         cptr = (char*)&working_set->members[i];

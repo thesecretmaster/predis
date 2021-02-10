@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #include <sched.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include "lib/resp_parser.h"
 #include "lib/command_ht.h"
 #include "lib/type_ht.h"
@@ -22,8 +23,6 @@
 #include "lib/gc.h"
 #include <assert.h>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpadded"
 // Don't care abotu padding right now
 struct conn_data {
   struct queue *processing_queue;
@@ -32,10 +31,8 @@ struct conn_data {
   struct type_ht *type_ht;
   struct ht_table *global_ht;
   int fd;
-  int nonblock_fd;
+  int epoll_fd;
 };
-
-#pragma GCC diagnostic pop
 
 static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struct predis_arg *_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
   printf("Starting load\n");
@@ -70,7 +67,7 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(int fd, struct timer *timer, struct resp_spare_page *resp_sp, struct resp_allocations **resp_allocs) {
+static int packet_reciever(int epoll_fd, struct resp_reciever_data *rrd, struct timer *timer, struct resp_allocations **resp_allocs) {
   int cmd_status;
   long argc;
   char **argv;
@@ -79,9 +76,9 @@ static int packet_reciever(int fd, struct timer *timer, struct resp_spare_page *
   unsigned int tag;
   tint = timer_start_interval(timer, INTERVAL_RUNNING, (tag = (unsigned int)rand()));
   *resp_allocs = resp_cmd_init(tag);
-  cmd_status = resp_cmd_process(fd, *resp_allocs, resp_sp);
+  cmd_status = resp_cmd_process(rrd, *resp_allocs);
   if (cmd_status == -2) {
-    printf("Connection %d closed\n", fd);
+    printf("Connection %d closed\n", resp_reciever_label(rrd));
     timer_stop(tint);
     return -1;
   } else if (cmd_status != 0) {
@@ -101,25 +98,24 @@ static int packet_reciever(int fd, struct timer *timer, struct resp_spare_page *
 
 static void *packet_reciever_queue(void *_cdata) {
   struct conn_data *cdata = _cdata;
-  struct queue *queue = cdata->processing_queue;
   struct timer *timer = timer_init(cdata->fd, THREAD_RECIEVER);
   struct resp_allocations *resp_allocs;
+  struct resp_reciever_data *rrd = resp_initialize_reciever(cdata->fd);
   timer_interval *tint;
-  struct resp_spare_page *resp_sp = resp_cmd_init_spare_page();
   int rval;
   do {
-    rval = packet_reciever(cdata->fd, timer, resp_sp, &resp_allocs);
+    rval = packet_reciever(cdata->epoll_fd, rrd, timer, &resp_allocs);
     if (rval < 0) {
       break;
     } else if (rval > 0) {
       continue;
     } else {
       tint = timer_start_interval(timer, INTERVAL_QUEUE, 0);
-      while (queue_push(queue, &resp_allocs) != 0) {}
+      while (queue_push(cdata->processing_queue, &resp_allocs) != 0) {}
       timer_stop(tint);
     }
   } while (true);
-  queue_close(queue);
+  queue_close(cdata->processing_queue);
   printf("Recver exiting\n");
   return NULL;
 }
@@ -175,7 +171,7 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
         gc_lock(gcg);
         working_set = malloc(sizeof(struct gc_working_set) + sizeof(void*)*argc*2);
         working_set->length = argc*2;
-        memset(&working_set->members, (int)NULL, sizeof(void*)*working_set->length);
+        memset(&working_set->members, (uintptr_t)NULL, sizeof(void*)*working_set->length);
         for (unsigned long i = 0; i < argc; i++) {
           data[i].ht_value = NULL;
           data[i].data = NULL;
@@ -361,7 +357,7 @@ static void *runner_queue(void *_cdata) {
   int qpop_rval = 0;
   struct gc_group *gc = gc_register_user();
   ctx.command_ht = cdata->command_ht;
-  ctx.reply_fd = cdata->nonblock_fd;
+  ctx.reply_fd = cdata->fd;
   ctx.sending_queue = cdata->sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
   do {
@@ -607,7 +603,6 @@ int main() {
     printf("Accepted a conn %d!\n", client_sock);
     obj = malloc(sizeof(struct conn_data));
     obj->fd = client_sock;
-    obj->nonblock_fd = client_sock;
     // obj->nonblock_fd = fcntl(client_sock, F_DUPFD);
     // fcntl(obj->nonblock_fd, F_SETFL, O_NONBLOCK);
     obj->global_ht = global_ht;
