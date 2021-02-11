@@ -14,7 +14,6 @@
 
 #endif // RESP_PARSER_USE_DW
 
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpadded"
 
@@ -53,37 +52,15 @@ static void print_raw(char *s) {
   printf("\n");
 }
 
-struct resp_reciever_data {
-  // struct resp_spare_page spare_page;
-  int epoll_fd;
-  // unsigned int pollfds_length;
-  // struct pollfd pollfds[];
-};
-
-int resp_reciever_label(struct resp_reciever_data *rrd) {
-  return rrd->epoll_fd;
-}
-
-void resp_conn_data_prime(struct resp_conn_data *cdata, struct resp_reciever_data *rrd) {
+void resp_conn_data_prime(struct resp_conn_data *cdata, int epoll_fd) {
   struct epoll_event ev;
   ev.events = EPOLLIN | EPOLLONESHOT;
   ev.data.ptr = cdata;
-  epoll_ctl(rrd->epoll_fd, EPOLL_CTL_MOD, cdata->fd, &ev);
+  epoll_ctl(epoll_fd, EPOLL_CTL_MOD, cdata->fd, &ev);
 }
 
 static inline int rp_recieve(int fd, void *buff, size_t len, int flags) {
   return recv(fd, buff, len, flags);
-}
-
-struct resp_reciever_data *resp_initialize_reciever(int epoll_fd) {
-  struct resp_reciever_data *d = malloc(sizeof(struct resp_reciever_data));
-  // d->spare_page.size = 0;
-  // d->spare_page.page = NULL;
-  d->epoll_fd = epoll_fd;
-  // d->pollfds_length = pollfds_length;
-  // d->pollfds[0].fd = fd;
-  // d->pollfds[0].events = POLLIN;
-  return d;
 }
 
 #define BUFSIZE 256
@@ -172,7 +149,7 @@ static int process_length_internal(int fd_data, char *buf_ptr_orig, char *curren
   return 0;
 }
 
-int resp_cmd_process(struct resp_reciever_data *recvr_data, struct resp_allocations * const allocs, struct resp_conn_data **cdata, void **udata, int *ret_fd) {
+int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struct resp_conn_data **cdata, void **udata, int *ret_fd) {
   unsigned int copy_length;
   // Setup first buffer or use spare page buffer
   // Read "*<length>\r\n"
@@ -180,7 +157,7 @@ int resp_cmd_process(struct resp_reciever_data *recvr_data, struct resp_allocati
   unsigned int current_buffer_length;
   ssize_t recv_val;
   struct epoll_event ep_data;
-  if (epoll_wait(recvr_data->epoll_fd, &ep_data, 1, -1) != 1)
+  if (epoll_wait(epoll_fd, &ep_data, 1, -1) != 1)
     return -10;
   struct resp_conn_data *resp_cdata = ep_data.data.ptr;
   int fd_data = resp_cdata->fd;

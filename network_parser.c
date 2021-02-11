@@ -68,17 +68,19 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(struct resp_reciever_data *rrd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *fd) {
+static int packet_reciever(int epoll_fd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *par_fd) {
   int cmd_status;
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
   *resp_allocs = resp_cmd_init(0x0);
   struct queue *pc;
-  cmd_status = resp_cmd_process(rrd, *resp_allocs, cdata, &pc, fd);
+  int fd;
+  cmd_status = resp_cmd_process(epoll_fd, *resp_allocs, cdata, &pc, &fd);
   *proc_q = pc;
+  *par_fd = fd;
   if (cmd_status == -2 || cmd_status == -1) {
-    printf("Connection %d closed\n", *fd);
+    printf("Connection %d closed\n", fd);
     return -1;
   } else if (cmd_status != 0) {
     printf("Protocol error: %d\n", cmd_status);
@@ -100,18 +102,17 @@ static void *packet_reciever_queue(void *_pr_data) {
   struct packet_reciever_data *pr_data = _pr_data;
   struct resp_allocations *resp_allocs;
   int ret_fd;
-  struct resp_reciever_data *rrd = resp_initialize_reciever(pr_data->epoll_fd);
   struct queue *proc_q;
   struct resp_conn_data *cdata;
   int rval;
   do {
-    rval = packet_reciever(rrd, &resp_allocs, &cdata, &proc_q, &ret_fd);
+    rval = packet_reciever(pr_data->epoll_fd, &resp_allocs, &cdata, &proc_q, &ret_fd);
     if (rval < 0) {
       queue_close(proc_q);
     } else if (rval > 0) {
       continue;
     } else {
-      resp_conn_data_prime(cdata, rrd);
+      resp_conn_data_prime(cdata, pr_data->epoll_fd);
       while (queue_push(proc_q, &resp_allocs) != 0) {}
     }
   } while (true);
@@ -455,7 +456,6 @@ static void *onestep_thread(void *_onestep_data) {
   int fd;
   struct queue *sending_queue = queue_init(50, sizeof(struct pre_send));
 
-  struct resp_reciever_data *rrd = resp_initialize_reciever(os_data->epoll_fd);
   struct resp_conn_data *rcdata;
   struct resp_allocations *resp_allocs;
   struct queue *proc_q;
@@ -469,7 +469,7 @@ static void *onestep_thread(void *_onestep_data) {
 
   struct pre_send pre_send;
   do {
-    rval = packet_reciever(rrd, &resp_allocs, &rcdata, &proc_q, &fd);
+    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, &proc_q, &fd);
     if (rval < 0) {
       if (rval == -1)
         shutdown(fd, 0);
@@ -477,7 +477,7 @@ static void *onestep_thread(void *_onestep_data) {
     } else if (rval > 0) {
       continue;
     }
-    resp_conn_data_prime(rcdata, rrd);
+    resp_conn_data_prime(rcdata, os_data->epoll_fd);
 
     ctx.reply_fd = fd;
 
