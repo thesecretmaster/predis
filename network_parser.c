@@ -22,6 +22,7 @@
 #include "lib/timer.h"
 #include "lib/gc.h"
 #include <assert.h>
+#include <sys/epoll.h>
 
 // Don't care abotu padding right now
 struct conn_data {
@@ -30,6 +31,7 @@ struct conn_data {
   struct command_ht *command_ht;
   struct type_ht *type_ht;
   struct ht_table *global_ht;
+  struct resp_conn_data *resp_cdata;
   int fd;
   int epoll_fd;
 };
@@ -67,55 +69,64 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(int epoll_fd, struct resp_reciever_data *rrd, struct timer *timer, struct resp_allocations **resp_allocs) {
+static int packet_reciever(struct resp_reciever_data *rrd, struct timer *timer, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *fd) {
   int cmd_status;
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
   timer_interval *tint;
   unsigned int tag;
-  tint = timer_start_interval(timer, INTERVAL_RUNNING, (tag = (unsigned int)rand()));
+  // tint = timer_start_interval(timer, INTERVAL_RUNNING, (tag = (unsigned int)rand()));
   *resp_allocs = resp_cmd_init(tag);
-  cmd_status = resp_cmd_process(rrd, *resp_allocs);
+  struct queue *pc;
+  cmd_status = resp_cmd_process(rrd, *resp_allocs, cdata, &pc, fd);
+  *proc_q = pc;
   if (cmd_status == -2) {
-    printf("Connection %d closed\n", resp_reciever_label(rrd));
-    timer_stop(tint);
+    printf("Connection %d closed\n", *fd);
+    // timer_stop(tint);
     return -1;
   } else if (cmd_status != 0) {
     printf("Protocol error: %d\n", cmd_status);
-    timer_stop(tint);
+    // timer_stop(tint);
     return -2;
   }
   resp_cmd_args(*resp_allocs, &argc, &argv, &argv_lengths);
   if (argc < 1) {
     printf("Command array too short (%ld)\n", argc);
-    timer_stop(tint);
+    // timer_stop(tint);
     return 1;
   }
-  timer_stop(tint);
+  // timer_stop(tint);
   return 0;
 }
 
-static void *packet_reciever_queue(void *_cdata) {
-  struct conn_data *cdata = _cdata;
-  struct timer *timer = timer_init(cdata->fd, THREAD_RECIEVER);
+struct packet_reciever_data {
+  int epoll_fd;
+};
+
+static void *packet_reciever_queue(void *_pr_data) {
+  struct packet_reciever_data *pr_data = _pr_data;
+  struct timer *timer = timer_init(pr_data->epoll_fd, THREAD_RECIEVER);
   struct resp_allocations *resp_allocs;
-  struct resp_reciever_data *rrd = resp_initialize_reciever(cdata->fd);
+  int ret_fd;
+  struct resp_reciever_data *rrd = resp_initialize_reciever(pr_data->epoll_fd);
+  struct queue *proc_q;
+  struct resp_conn_data *cdata;
   timer_interval *tint;
   int rval;
   do {
-    rval = packet_reciever(cdata->epoll_fd, rrd, timer, &resp_allocs);
+    rval = packet_reciever(rrd, timer, &resp_allocs, &cdata, &proc_q, &ret_fd);
     if (rval < 0) {
-      break;
+      queue_close(proc_q);
     } else if (rval > 0) {
       continue;
     } else {
-      tint = timer_start_interval(timer, INTERVAL_QUEUE, 0);
-      while (queue_push(cdata->processing_queue, &resp_allocs) != 0) {}
-      timer_stop(tint);
+      resp_conn_data_prime(cdata, rrd);
+      // tint = timer_start_interval(timer, INTERVAL_QUEUE, 0);
+      while (queue_push(proc_q, &resp_allocs) != 0) {}
+      // timer_stop(tint);
     }
   } while (true);
-  queue_close(cdata->processing_queue);
   printf("Recver exiting\n");
   return NULL;
 }
@@ -467,6 +478,51 @@ static void *sender(void *_obj) {
   return NULL;
 }
 
+struct onestep_data {
+  struct command_ht *command_ht;
+  struct ht_table *global_ht;
+  int epoll_fd;
+};
+
+static void *onestep_thread(void *_onestep_data) {
+  struct onestep_data *os_data = _onestep_data;
+  int fd;
+  struct queue *sending_queue = queue_init(50, sizeof(struct pre_send));
+
+  struct resp_reciever_data *rrd = resp_initialize_reciever(os_data->epoll_fd);
+  struct resp_conn_data *rcdata;
+  struct resp_allocations *resp_allocs;
+  struct queue *proc_q;
+  int rval;
+  struct timer *timer1 = timer_init(os_data->epoll_fd, THREAD_RECIEVER);
+
+  struct gc_group *gc = gc_register_user();
+  struct predis_ctx ctx;
+  ctx.command_ht = os_data->command_ht;
+  ctx.sending_queue = sending_queue;
+  ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
+  struct timer *timer2 = timer_init(os_data->epoll_fd, THREAD_RUNNER);
+
+  struct pre_send pre_send;
+  do {
+    rval = packet_reciever(rrd, timer1, &resp_allocs, &rcdata, &proc_q, &fd);
+    if (rval < 0) {
+      continue;
+    } else if (rval > 0) {
+      continue;
+    }
+    resp_conn_data_prime(rcdata, rrd);
+
+    ctx.reply_fd = fd;
+
+    runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, timer2, gc);
+
+    while (queue_pop(sending_queue, &pre_send) == 0) {
+      send_pre_data(fd, &pre_send);
+    }
+  } while (true);
+}
+
 struct gc_data {
   volatile bool stop;
 };
@@ -542,17 +598,51 @@ static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_gl
   gc_commit(gcg, NULL);
   return 0;
 }
-
-int main() {
+#include <getopt.h>
+#include <sys/sysinfo.h>
+int main(int argc, char *argv[]) {
   signal(SIGINT, &sigint_handler);
-  printf("Starting server\n");
+
+  unsigned int thread_count = (unsigned int)get_nprocs();
+  unsigned int port = 8000;
+
+  const struct option prog_opts[] = {
+    {"port", optional_argument, NULL, 'p'},
+    {"threads", optional_argument, NULL, 't'},
+  };
+  int c;
+  while (1) {
+    c = getopt_long(argc, argv, "p:t:", prog_opts, NULL);
+    if (c == -1) { break; }
+    switch (c) {
+      case 't':
+        if (optarg != NULL) {
+          thread_count = (unsigned int)strtol(optarg, NULL, 10);
+        } else {
+          printf("-t requires an argument\n");
+        }
+        break;
+      case 'p':
+        if (optarg != NULL) {
+          port = (unsigned long)strtol(optarg, NULL, 10);
+        } else {
+          printf("-p requires an argument\n");
+        }
+        break;
+    }
+  }
+
+  printf("Starting server on port %u with %u threads\n", port, thread_count);
   struct addrinfo *addrinfo;
   struct addrinfo hints;
+  int port_string_length = snprintf(NULL, 0, "%u", port);
+  char port_string[port_string_length + 1];
+  snprintf(port_string, port_string_length + 1, "%u", port);
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
   hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
   hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
-  if (getaddrinfo("0.0.0.0", "8000", &hints, &addrinfo) != 0) {
+  if (getaddrinfo("0.0.0.0", port_string, &hints, &addrinfo) != 0) {
     printf("bad\n");
     return 1;
   }
@@ -598,11 +688,26 @@ int main() {
   load_structures(&ctx, NULL, &((char*){"commands/config.so"}), NULL, 1);
   load_structures(&ctx, NULL, &((char*){"commands/hash.so"}), NULL, 1);
   struct conn_data *obj;
+  int epoll_fd = epoll_create(1024); // Just a hint; redis uses this so I guess we will
+  struct epoll_event ev;
+  // struct packet_reciever_data *pr_data = malloc(sizeof(struct packet_reciever_data));
+  // pr_data->epoll_fd = epoll_fd;
+  // for (int i = 0; i < 4; i++) {
+  //   pthread_create(&pid, NULL, packet_reciever_queue, pr_data);
+  // }
+  struct onestep_data *os_data = malloc(sizeof(struct onestep_data));
+  os_data->global_ht = global_ht;
+  os_data->command_ht = global_command_ht;
+  os_data->epoll_fd = epoll_fd;
+  for (int i = 0; i < thread_count; i++) {
+    pthread_create(&pid, NULL, onestep_thread, os_data);
+  }
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);
     printf("Accepted a conn %d!\n", client_sock);
     obj = malloc(sizeof(struct conn_data));
     obj->fd = client_sock;
+    obj->epoll_fd = epoll_fd;
     // obj->nonblock_fd = fcntl(client_sock, F_DUPFD);
     // fcntl(obj->nonblock_fd, F_SETFL, O_NONBLOCK);
     obj->global_ht = global_ht;
@@ -611,9 +716,11 @@ int main() {
     assert(obj->sending_queue != NULL);
     obj->command_ht = global_command_ht;
     obj->type_ht = global_type_ht;
-    pthread_create(&pid, NULL, packet_reciever_queue, obj);
-    pthread_create(&pid, NULL, runner_queue, obj);
-    pthread_create(&pid, NULL, sender, obj);
-    // pthread_create(&pid, NULL, qchecker, obj);
+    ev.events = EPOLLIN | EPOLLONESHOT;
+    ev.data.ptr = resp_conn_data_init(client_sock, obj->processing_queue);
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &ev);
+    // pthread_create(&pid, NULL, runner_queue, obj);
+    // pthread_create(&pid, NULL, sender, obj);
+    // // pthread_create(&pid, NULL, qchecker, obj);
   }
 }

@@ -6,7 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <poll.h>
+#include <sys/epoll.h>
 
 #ifdef RESP_PARSER_USE_DW
 
@@ -25,6 +25,21 @@ struct resp_spare_page {
 
 #pragma GCC diagnostic pop
 
+struct resp_conn_data {
+  void *data;
+  struct resp_spare_page spare_page;
+  int fd;
+};
+
+struct resp_conn_data *resp_conn_data_init(int fd, void *data) {
+  struct resp_conn_data *cd = malloc(sizeof(struct resp_conn_data));
+  cd->spare_page.size = 0;
+  cd->spare_page.page = NULL;
+  cd->data = data;
+  cd->fd = fd;
+  return cd;
+}
+
 static void print_raw(char *s) {
   while (*s != '\0') {
     if (*s == '\r')
@@ -39,29 +54,35 @@ static void print_raw(char *s) {
 }
 
 struct resp_reciever_data {
-  struct resp_spare_page spare_page;
-  int fd;
-  unsigned int pollfds_length;
-  struct pollfd pollfds[];
+  // struct resp_spare_page spare_page;
+  int epoll_fd;
+  // unsigned int pollfds_length;
+  // struct pollfd pollfds[];
 };
 
 int resp_reciever_label(struct resp_reciever_data *rrd) {
-  return rrd->fd;
+  return rrd->epoll_fd;
 }
 
-static inline int rp_recieve(struct resp_reciever_data *fd_data, void *buff, size_t len, int flags) {
-  return recv(fd_data->fd, buff, len, flags);
+void resp_conn_data_prime(struct resp_conn_data *cdata, struct resp_reciever_data *rrd) {
+  struct epoll_event ev;
+  ev.events = EPOLLIN | EPOLLONESHOT;
+  ev.data.ptr = cdata;
+  epoll_ctl(rrd->epoll_fd, EPOLL_CTL_MOD, cdata->fd, &ev);
 }
 
-struct resp_reciever_data *resp_initialize_reciever(int fd) {
-  unsigned int pollfds_length = 1;
-  struct resp_reciever_data *d = malloc(sizeof(struct resp_reciever_data) + sizeof(struct pollfd) * pollfds_length);
-  d->fd = fd;
-  d->spare_page.size = 0;
-  d->spare_page.page = NULL;
-  d->pollfds_length = pollfds_length;
-  d->pollfds[0].fd = fd;
-  d->pollfds[0].events = POLLIN;
+static inline int rp_recieve(int fd, void *buff, size_t len, int flags) {
+  return recv(fd, buff, len, flags);
+}
+
+struct resp_reciever_data *resp_initialize_reciever(int epoll_fd) {
+  struct resp_reciever_data *d = malloc(sizeof(struct resp_reciever_data));
+  // d->spare_page.size = 0;
+  // d->spare_page.page = NULL;
+  d->epoll_fd = epoll_fd;
+  // d->pollfds_length = pollfds_length;
+  // d->pollfds[0].fd = fd;
+  // d->pollfds[0].events = POLLIN;
   return d;
 }
 
@@ -92,7 +113,7 @@ unsigned int resp_get_tag(struct resp_allocations *allocs) {
   return allocs->tag;
 }
 
-static int process_length_internal(struct resp_reciever_data *fd_data, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, bulkstring_size_t *argc) {
+static int process_length_internal(int fd_data, char *buf_ptr_orig, char *current_buffer, unsigned int current_buffer_length, char **new_buf_ptr, char **new_page, unsigned int *new_page_length, bulkstring_size_t *argc) {
   char *buf_ptr;
   ssize_t recv_val;
   unsigned int copy_length;
@@ -151,14 +172,22 @@ static int process_length_internal(struct resp_reciever_data *fd_data, char *buf
   return 0;
 }
 
-int resp_cmd_process(struct resp_reciever_data *fd_data, struct resp_allocations * const allocs) {
+int resp_cmd_process(struct resp_reciever_data *recvr_data, struct resp_allocations * const allocs, struct resp_conn_data **cdata, void **udata, int *ret_fd) {
   unsigned int copy_length;
   // Setup first buffer or use spare page buffer
   // Read "*<length>\r\n"
   char *current_buffer;
   unsigned int current_buffer_length;
   ssize_t recv_val;
-  struct resp_spare_page *spare_page = &fd_data->spare_page;
+  struct epoll_event ep_data;
+  if (epoll_wait(recvr_data->epoll_fd, &ep_data, 1, -1) != 1)
+    return -10;
+  struct resp_conn_data *resp_cdata = ep_data.data.ptr;
+  int fd_data = resp_cdata->fd;
+  *ret_fd = fd_data;
+  *udata = resp_cdata->data;
+  *cdata = resp_cdata;
+  struct resp_spare_page *spare_page = &resp_cdata->spare_page;
   if (spare_page->page == NULL) {
     current_buffer = malloc(BUFSIZE + 1);
     current_buffer[BUFSIZE] = '\0';

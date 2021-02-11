@@ -11,14 +11,17 @@ typedef long bulkstring_size_t;
 
 struct resp_allocations;
 struct resp_reciever_data;
+struct resp_conn_data;
 
 struct resp_reciever_data *resp_initialize_reciever(int fd);
 struct resp_allocations *resp_cmd_init(unsigned int tag);
 unsigned int resp_get_tag(struct resp_allocations *allocs);
-int resp_cmd_process(struct resp_reciever_data*, struct resp_allocations * const allocs);
+int resp_cmd_process(struct resp_reciever_data*, struct resp_allocations * const allocs, struct resp_conn_data **cdata, void**data, int *fd);
 void resp_cmd_free(struct resp_allocations * const allocs);
 void resp_cmd_args(struct resp_allocations * const allocs, long*, char***, bulkstring_size_t **);
 int resp_reciever_label(struct resp_reciever_data *rrd);
+struct resp_conn_data *resp_conn_data_init(int fd, void *data);
+void resp_conn_data_prime(struct resp_conn_data *cdata, struct resp_reciever_data *rrd);
 
 #ifdef RESP_PARSER_USE_DW
 // See comment at the top of resp_parser_dw.c for an explanation of why this is
