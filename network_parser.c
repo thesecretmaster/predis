@@ -19,7 +19,6 @@
 #include "predis_ctx.h"
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
-#include "lib/timer.h"
 #include "lib/gc.h"
 #include <assert.h>
 #include <sys/epoll.h>
@@ -69,34 +68,27 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(struct resp_reciever_data *rrd, struct timer *timer, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *fd) {
+static int packet_reciever(struct resp_reciever_data *rrd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *fd) {
   int cmd_status;
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
-  timer_interval *tint;
-  unsigned int tag;
-  // tint = timer_start_interval(timer, INTERVAL_RUNNING, (tag = (unsigned int)rand()));
-  *resp_allocs = resp_cmd_init(tag);
+  *resp_allocs = resp_cmd_init(0x0);
   struct queue *pc;
   cmd_status = resp_cmd_process(rrd, *resp_allocs, cdata, &pc, fd);
   *proc_q = pc;
-  if (cmd_status == -2) {
+  if (cmd_status == -2 || cmd_status == -1) {
     printf("Connection %d closed\n", *fd);
-    // timer_stop(tint);
     return -1;
   } else if (cmd_status != 0) {
     printf("Protocol error: %d\n", cmd_status);
-    // timer_stop(tint);
     return -2;
   }
   resp_cmd_args(*resp_allocs, &argc, &argv, &argv_lengths);
   if (argc < 1) {
     printf("Command array too short (%ld)\n", argc);
-    // timer_stop(tint);
     return 1;
   }
-  // timer_stop(tint);
   return 0;
 }
 
@@ -106,36 +98,29 @@ struct packet_reciever_data {
 
 static void *packet_reciever_queue(void *_pr_data) {
   struct packet_reciever_data *pr_data = _pr_data;
-  struct timer *timer = timer_init(pr_data->epoll_fd, THREAD_RECIEVER);
   struct resp_allocations *resp_allocs;
   int ret_fd;
   struct resp_reciever_data *rrd = resp_initialize_reciever(pr_data->epoll_fd);
   struct queue *proc_q;
   struct resp_conn_data *cdata;
-  timer_interval *tint;
   int rval;
   do {
-    rval = packet_reciever(rrd, timer, &resp_allocs, &cdata, &proc_q, &ret_fd);
+    rval = packet_reciever(rrd, &resp_allocs, &cdata, &proc_q, &ret_fd);
     if (rval < 0) {
       queue_close(proc_q);
     } else if (rval > 0) {
       continue;
     } else {
       resp_conn_data_prime(cdata, rrd);
-      // tint = timer_start_interval(timer, INTERVAL_QUEUE, 0);
       while (queue_push(proc_q, &resp_allocs) != 0) {}
-      // timer_stop(tint);
     }
   } while (true);
-  printf("Recver exiting\n");
   return NULL;
 }
 
 #include "predis_arg_impl.c"
 
-static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct timer *timer, struct gc_group *gcg) {
-  timer_interval *tint;
-  tint = timer_start_interval(timer, INTERVAL_RUNNING, resp_get_tag(resp_allocs));
+static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct gc_group *gcg) {
   char **argv;
   bulkstring_size_t *argv_lengths;
   char **ptrs;
@@ -355,38 +340,27 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   if (ctx->needs_reply)
     replySimpleString(ctx, "OK");
   resp_cmd_free(resp_allocs);
-  timer_stop(tint);
 }
 
 static void *runner_queue(void *_cdata) {
   struct conn_data *cdata = _cdata;
-  struct timer *timer = timer_init(cdata->fd, THREAD_RUNNER);
   struct queue *queue = cdata->processing_queue;
-  timer_sum *tint = NULL; // silence warning; will always be initialized
   struct resp_allocations *resp_allocs;
   struct predis_ctx ctx;
-  int qpop_rval = 0;
   struct gc_group *gc = gc_register_user();
   ctx.command_ht = cdata->command_ht;
   ctx.reply_fd = cdata->fd;
   ctx.sending_queue = cdata->sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
   do {
-    if (qpop_rval == 0) {
-      tint = timer_start_sum(timer, INTERVAL_QUEUE, 0);
-    } else {
-      timer_restart(tint);
-    }
-    qpop_rval = queue_pop(queue, (void*)&resp_allocs);
-    timer_incr(tint);
-    if (qpop_rval != 0) {
+    if (queue_pop(queue, (void*)&resp_allocs) != 0) {
       if (queue_closed(queue)) {
         break;
       } else {
         continue;
       }
     }
-    runner(&ctx, resp_allocs, cdata->command_ht, cdata->global_ht, timer, gc);
+    runner(&ctx, resp_allocs, cdata->command_ht, cdata->global_ht, gc);
   } while (!queue_closed(queue));
   queue_close(cdata->sending_queue);
   printf("Runner exiting\n");
@@ -452,37 +426,29 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
 
 static void *sender(void *_obj) {
   struct conn_data *obj = _obj;
-  struct timer *timer = timer_init(obj->fd, THREAD_SENDER);
-  timer_sum *tint = NULL; // silence warning; will always be initialized
   struct queue *q = obj->sending_queue;
   struct pre_send pre_send;
-  int qpop_rval = 0;
   while (!queue_closed(q)) {
-    if (qpop_rval == 0) {
-      tint = timer_start_sum(timer, INTERVAL_QUEUE, 0);
-    } else {
-      timer_restart(tint);
-    }
-    qpop_rval = queue_pop(q, &pre_send);
-    timer_incr(tint);
-    if (qpop_rval == 0) {
-      tint = timer_start_interval(timer, INTERVAL_RUNNING, 1);
+    if (queue_pop(q, &pre_send) == 0) {
       send_pre_data(obj->fd, &pre_send);
-      timer_stop(tint);
     }
   }
   queue_free(obj->sending_queue);
   queue_free(obj->processing_queue);
   printf("Sender exiting\n");
-  // timer_print();
   return NULL;
 }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
 
 struct onestep_data {
   struct command_ht *command_ht;
   struct ht_table *global_ht;
   int epoll_fd;
 };
+
+#pragma GCC diagnostic pop
 
 static void *onestep_thread(void *_onestep_data) {
   struct onestep_data *os_data = _onestep_data;
@@ -494,19 +460,19 @@ static void *onestep_thread(void *_onestep_data) {
   struct resp_allocations *resp_allocs;
   struct queue *proc_q;
   int rval;
-  struct timer *timer1 = timer_init(os_data->epoll_fd, THREAD_RECIEVER);
 
   struct gc_group *gc = gc_register_user();
   struct predis_ctx ctx;
   ctx.command_ht = os_data->command_ht;
   ctx.sending_queue = sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
-  struct timer *timer2 = timer_init(os_data->epoll_fd, THREAD_RUNNER);
 
   struct pre_send pre_send;
   do {
-    rval = packet_reciever(rrd, timer1, &resp_allocs, &rcdata, &proc_q, &fd);
+    rval = packet_reciever(rrd, &resp_allocs, &rcdata, &proc_q, &fd);
     if (rval < 0) {
+      if (rval == -1)
+        shutdown(fd, 0);
       continue;
     } else if (rval > 0) {
       continue;
@@ -515,7 +481,7 @@ static void *onestep_thread(void *_onestep_data) {
 
     ctx.reply_fd = fd;
 
-    runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, timer2, gc);
+    runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, gc);
 
     while (queue_pop(sending_queue, &pre_send) == 0) {
       send_pre_data(fd, &pre_send);
@@ -603,7 +569,7 @@ static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_gl
 int main(int argc, char *argv[]) {
   signal(SIGINT, &sigint_handler);
 
-  unsigned int thread_count = (unsigned int)get_nprocs();
+  int thread_count = (int)get_nprocs();
   unsigned int port = 8000;
 
   const struct option prog_opts[] = {
@@ -617,14 +583,14 @@ int main(int argc, char *argv[]) {
     switch (c) {
       case 't':
         if (optarg != NULL) {
-          thread_count = (unsigned int)strtol(optarg, NULL, 10);
+          thread_count = (int)strtol(optarg, NULL, 10);
         } else {
           printf("-t requires an argument\n");
         }
         break;
       case 'p':
         if (optarg != NULL) {
-          port = (unsigned long)strtol(optarg, NULL, 10);
+          port = (unsigned int)strtol(optarg, NULL, 10);
         } else {
           printf("-p requires an argument\n");
         }
@@ -637,7 +603,7 @@ int main(int argc, char *argv[]) {
   struct addrinfo hints;
   int port_string_length = snprintf(NULL, 0, "%u", port);
   char port_string[port_string_length + 1];
-  snprintf(port_string, port_string_length + 1, "%u", port);
+  snprintf(port_string, (unsigned long)port_string_length + 1, "%u", port);
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
   hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
