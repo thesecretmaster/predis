@@ -104,7 +104,7 @@ static void gc_ht_free_func(void *_ptr) {
 
 void gc_initialize() {
   pthread_mutex_init(&gc_run_lock, NULL);
-  struct ht_table *table = ht_init();
+  struct ht_table *table = ht_init(false);
   struct ht_table *nul = NULL;
   if (!__atomic_compare_exchange_n(&gc_state.free_list, &nul, table, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
     ht_free(table, gc_ht_free_func);

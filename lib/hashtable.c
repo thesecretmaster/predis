@@ -42,6 +42,7 @@ struct ht_table {
   volatile unsigned int element_count;
   volatile unsigned int bitlen;
   volatile unsigned int bitlen_internal;
+  bool use_gc;
 };
 
 #pragma GCC diagnostic pop
@@ -92,12 +93,13 @@ const char *ht_key(struct ht_node *n) {
 }
 #endif
 
-struct ht_table *ht_init() {
+struct ht_table *ht_init(bool use_gc) {
   struct ht_table *table = malloc(sizeof(struct ht_table));
   if (table == NULL)
     return NULL;
   table->bitlen = 1;
   table->bitlen_internal = table->bitlen;
+  table->use_gc = use_gc;
   unsigned int bucket_count = CHAR_BIT * sizeof(struct ht_node*);
   struct ht_node ***buckets = malloc(sizeof(struct ht_node**) * bucket_count);
   if (buckets == NULL) {
@@ -254,11 +256,7 @@ static inline struct ht_node *ht_get_sentinel(struct ht_table *table, unsigned i
       }
       prev = table->buckets[offset_parent][offset_offset];
     } while (prev == NULL);
-    nnode = malloc(sizeof(struct ht_node) * (new_node == NULL ? 1 : 2));
-    if (new_node != NULL) {
-      *new_node = nnode + 1;
-      (*new_node)->contents.alloc_status = HT_REALLOC;
-    }
+    nnode = malloc(sizeof(struct ht_node));
     if (nnode == NULL) {
       #ifdef HT_TEST_API
       if (errno != ENOMEM) {
@@ -267,6 +265,12 @@ static inline struct ht_node *ht_get_sentinel(struct ht_table *table, unsigned i
       last_allocation_size = sizeof(struct ht_node);
       #endif
       return NULL;
+    }
+    if (new_node != NULL) {
+      *new_node = malloc(sizeof(struct ht_node));
+      if (*new_node == NULL)
+        return NULL;
+      (*new_node)->contents.alloc_status = HT_REALLOC;
     }
     nnode->key = NULL;
     nnode->key_hash = ht_reverse_bits(idx);
@@ -425,9 +429,14 @@ enum HT_RETURN_STATUS ht_find(struct ht_table *table, const char *key, const uns
   return HT_NOT_FOUND;
 }
 
-static void ht_free_node_gc(void *_node) {
+static void ht_default_gc_free_func(void *_node) {
   struct ht_node *node = _node;
   free(node->key);
+  free(node);
+}
+
+static void ht_gc_gc_free_func(void *_node) {
+  struct ht_node *node = _node;
   free(node);
 }
 
@@ -447,7 +456,11 @@ enum HT_RETURN_STATUS ht_del(struct ht_table *table, const char *key, const unsi
       if (__atomic_compare_exchange_n(&(p->next), &n, n->next, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         if (value != NULL)
           *value = n->contents.value;
-        gc_free(n, ht_free_node_gc);
+        if (table->use_gc) {
+          gc_free(n, ht_default_gc_free_func);
+        } else {
+          gc_free(n, ht_gc_gc_free_func);
+        }
         return HT_GOOD;
       } else {
         p = sentinel;

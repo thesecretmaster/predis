@@ -424,6 +424,8 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
     }
   }
   send(fd, buf, (size_t)len, MSG_NOSIGNAL);
+  if (buf != nil_bs)
+    free(buf);
 }
 
 static void *sender(void *_obj) {
@@ -660,7 +662,7 @@ int main(int argc, char *argv[]) {
   gc_data = malloc(sizeof(struct gc_data));
   gc_data->stop = false;
   pthread_create(&gc_pid, NULL, gc_thread, gc_data);
-  global_ht = ht_init();
+  global_ht = ht_init(true);
   global_type_ht = type_ht_init(256);
   global_command_ht = command_ht_init(256, global_type_ht);
   const char load_cmd_fstring[] = "S";
