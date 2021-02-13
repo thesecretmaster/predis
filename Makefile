@@ -8,7 +8,7 @@ GPROF_FLAG = -pg
 CFLAGS = -fshort-enums # -Rpass='[^(licm|gvn)]' -Rpass-missed="inline"
 ALL_FLAGS = $(CFLAGS) $(DEBUG_FLAGS) $(SPEED_FLAGS) $(WARN_FLAGS)
 
-all: bin/server commands/string.so commands/config.so types/string.so types/hash.so commands/hash.so
+all: bin/server bin/server_dbg commands/string.so commands/config.so types/string.so types/hash.so commands/hash.so
 
 # lib/command_ht.c: lib/command_type_ht.c lib/command_ht.h
 # 	cp $< $@
@@ -22,19 +22,25 @@ tmp/%_ht.o: lib/%_ht.c
 tmp/commands.o: lib/commands.c
 	$(CC) $(ALL_FLAGS) -c $^ -o $@
 
+tmp/send_queue.o: lib/send_queue.c
+	$(CC) $(ALL_FLAGS) -c $^ -o $@
+
 tmp/full_ht.o: lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -DHT_ITERABLE -c $^ -o $@
 
-bin/server: network_parser.c lib/gc.c lib/netwrap.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
+bin/server: network_parser.c tmp/send_queue.o lib/gc.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
+	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $(WARN_FLAGS) -ldl -pthread $^ -o $@
+
+bin/server_dbg: network_parser.c tmp/send_queue.o lib/gc.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
 	$(CC) $(ALL_FLAGS) -ldl -pthread $^ -o $@
 
 commands/string.so: types/string.so
 commands/hash.so: types/hash.so
-commands/%.so: commands/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
+commands/%.so: commands/%.c tmp/send_queue.o tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 types/hash.so: tmp/full_ht.o lib/gc.c
-types/%.so: types/%.c tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
+types/%.so: types/%.c tmp/send_queue.o tmp/commands.o tmp/command_ht.o tmp/type_ht.o lib/1r1w_queue.c
 	$(CC) $(ALL_FLAGS) -Wno-unused-parameter -fPIC $^ -shared -o $@
 
 tmp/hashtable.%.o: lib/hashtable.c

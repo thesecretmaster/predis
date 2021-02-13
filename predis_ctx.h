@@ -17,6 +17,8 @@ struct predis_ctx {
   struct command_ht *command_ht;
   struct type_ht *type_ht;
   char *reply_buf;
+  struct send_queue *send_queue;
+  int send_queue_ptr;
   int reply_fd;
   bool needs_reply;
 };

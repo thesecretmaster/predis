@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "../send_queue.h"
-
+#include "send_queue.h"
 #include "1r1w_queue.h"
 
 #include "../predis_arg_impl.c"
@@ -96,7 +96,7 @@ int replySimpleString(struct predis_ctx *ctx, const char *ss) {
     .type = PRE_SEND_SS,
     .data.ss = ss
   };
-  queue_push(ctx->sending_queue, &pre_send);
+  send_queue_commit(ctx->send_queue, ctx->send_queue_ptr, &pre_send);
   ctx->needs_reply = false;
   return 0;
 }
@@ -109,7 +109,7 @@ int replyError(struct predis_ctx *ctx, const char *err) {
     .type = PRE_SEND_ERR,
     .data.ss = err
   };
-  queue_push(ctx->sending_queue, &pre_send);
+  send_queue_commit(ctx->send_queue, ctx->send_queue_ptr, &pre_send);
   ctx->needs_reply = false;
   return 0;
 }
@@ -122,7 +122,7 @@ int replyInt(struct predis_ctx *ctx, const long i) {
     .type = PRE_SEND_NUM,
     .data.num = i
   };
-  queue_push(ctx->sending_queue, &pre_send);
+  send_queue_commit(ctx->send_queue, ctx->send_queue_ptr, &pre_send);
   ctx->needs_reply = false;
   return 0;
 }
@@ -138,7 +138,7 @@ int replyBulkString(struct predis_ctx *ctx, const char *ss, long ss_len) {
       .contents = ss
     }
   };
-  queue_push(ctx->sending_queue, &pre_send);
+  send_queue_commit(ctx->send_queue, ctx->send_queue_ptr, &pre_send);
   ctx->needs_reply = false;
   return 0;
 }

@@ -20,6 +20,7 @@
 #include "lib/hashtable.h"
 #include "lib/1r1w_queue.h"
 #include "lib/gc.h"
+#include "lib/send_queue.h"
 #include <assert.h>
 #include <sys/epoll.h>
 
@@ -455,6 +456,10 @@ static void *onestep_thread(void *_onestep_data) {
   struct onestep_data *os_data = _onestep_data;
   int fd;
   struct queue *sending_queue = queue_init(50, sizeof(struct pre_send));
+  struct send_queue *sq;
+  int sq_ptr;
+  struct pre_send sq_data;
+  int sq_rval;
 
   struct resp_conn_data *rcdata;
   struct resp_allocations *resp_allocs;
@@ -469,7 +474,7 @@ static void *onestep_thread(void *_onestep_data) {
 
   struct pre_send pre_send;
   do {
-    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, &proc_q, &fd);
+    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, &sq, &fd);
     if (rval < 0) {
       if (rval == -1)
         shutdown(fd, 0);
@@ -477,15 +482,31 @@ static void *onestep_thread(void *_onestep_data) {
     } else if (rval > 0) {
       continue;
     }
+
+    do {
+      sq_ptr = send_queue_register(sq);
+    } while (sq_ptr < 0);
     resp_conn_data_prime(rcdata, os_data->epoll_fd);
 
     ctx.reply_fd = fd;
+    ctx.send_queue = sq;
+    ctx.send_queue_ptr = sq_ptr;
 
     runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, gc);
 
-    while (queue_pop(sending_queue, &pre_send) == 0) {
-      send_pre_data(fd, &pre_send);
+    do {
+      sq_rval = send_queue_pop_start(sq, &sq_data);
+    } while (sq_rval == -3);
+    if (sq_rval == 0) {
+      send_pre_data(fd, &sq_data);
+      while (send_queue_pop_continue(sq, &sq_data) == 0) {
+        send_pre_data(fd, &sq_data);
+      }
     }
+
+    // while (queue_pop(sending_queue, &pre_send) == 0) {
+    //   send_pre_data(fd, &pre_send);
+    // }
   } while (true);
 }
 
@@ -627,7 +648,7 @@ int main(int argc, char *argv[]) {
     return 2;
   }
   freeaddrinfo(addrinfo);
-  if (listen(socket_fd, 10) != 0) {
+  if (listen(socket_fd, 48) != 0) {
     printf("bad4\n");
     return 4;
   }
@@ -683,7 +704,7 @@ int main(int argc, char *argv[]) {
     obj->command_ht = global_command_ht;
     obj->type_ht = global_type_ht;
     ev.events = EPOLLIN | EPOLLONESHOT;
-    ev.data.ptr = resp_conn_data_init(client_sock, obj->processing_queue);
+    ev.data.ptr = resp_conn_data_init(client_sock, send_queue_init(10, sizeof(struct pre_send)));
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &ev);
     // pthread_create(&pid, NULL, runner_queue, obj);
     // pthread_create(&pid, NULL, sender, obj);
