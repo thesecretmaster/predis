@@ -1,0 +1,8 @@
+All the code in this directory is copied directly from redis.
+
+I'm not a lawyer, but from my laypersons understanding, since the
+code I'm copying is a) small b) fairly generic and c) part of an
+entirely new codebase (so transformative use) it should be fair use.
+However, if any redis maintainer wants to reach out please do and
+I'll go though and remove all this code and write my own implementations
+as soon as I can.
