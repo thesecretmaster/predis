@@ -81,7 +81,7 @@ static int packet_reciever(int epoll_fd, struct resp_allocations **resp_allocs, 
   *proc_q = pc;
   *par_fd = fd;
   if (cmd_status == -2 || cmd_status == -1) {
-    printf("Connection %d closed\n", fd);
+    printf("Connection %d other end closed\n", fd);
     return -1;
   } else if (cmd_status != 0) {
     printf("Protocol error: %d\n", cmd_status);
@@ -478,8 +478,10 @@ static void *onestep_thread(void *_onestep_data) {
   do {
     rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, &sq, &fd);
     if (rval < 0) {
-      if (rval == -1)
+      if (rval == -1) {
         shutdown(fd, 0);
+        close(fd);
+      }
       continue;
     } else if (rval > 0) {
       continue;
