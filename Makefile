@@ -29,10 +29,10 @@ tmp/full_ht.o: lib/hashtable.c
 	$(CC) $(ALL_FLAGS) -DHT_ITERABLE -c $^ -o $@
 
 bin/server: network_parser.c tmp/send_queue.o lib/gc.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
-	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $(WARN_FLAGS) -ldl -pthread $^ -o $@
+	$(CC) $(ALL_FLAGS) -ldl -pthread $^ -o $@
 
 bin/server_dbg: network_parser.c tmp/send_queue.o lib/gc.c lib/resp_parser.c tmp/command_ht.o tmp/commands.o tmp/type_ht.o tmp/full_ht.o lib/1r1w_queue.c lib/timer.c
-	$(CC) $(ALL_FLAGS) -ldl -pthread $^ -o $@
+	$(CC) $(CFLAGS) $(DEBUG_FLAGS) -Wno-everything -ldl -pthread $^ -o $@
 
 commands/string.so: types/string.so
 commands/hash.so: types/hash.so

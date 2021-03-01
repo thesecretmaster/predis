@@ -118,7 +118,7 @@ static inline void *packet_reciever_queue(void *_pr_data) {
 
 #include "predis_arg_impl.c"
 
-static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct gc_group *gcg) {
+static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs, struct command_ht *command_ht, struct ht_table *table, struct gc_user *gcg) {
   char **argv;
   bulkstring_size_t *argv_lengths;
   char **ptrs;
@@ -346,7 +346,7 @@ static inline void *runner_queue(void *_cdata) {
   struct queue *queue = cdata->processing_queue;
   struct resp_allocations *resp_allocs;
   struct predis_ctx ctx;
-  struct gc_group *gc = gc_register_user();
+  struct gc_user *gc = gc_register_user();
   ctx.command_ht = cdata->command_ht;
   ctx.reply_fd = cdata->fd;
   ctx.sending_queue = cdata->sending_queue;
@@ -465,7 +465,7 @@ static void *onestep_thread(void *_onestep_data) {
   struct resp_allocations *resp_allocs;
   int rval;
 
-  struct gc_group *gc = gc_register_user();
+  struct gc_user *gc = gc_register_user();
   struct predis_ctx ctx;
   ctx.command_ht = os_data->command_ht;
   ctx.sending_queue = sending_queue;
@@ -572,9 +572,9 @@ static void free_typed_data(void *_data) {
   data->type->free(data->data);
 }
 
-static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc, struct gc_group *gcg) {
+static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_global_ht_table, char **argv, argv_length_t *argv_lengths, int argc, struct gc_user *gc_usr) {
   struct ht_table *table = _global_ht_table;
-  gc_lock(gcg);
+  gc_lock(gc_usr);
   for (int i = 0; i < argc; i++) {
     if (argv_lengths[i] > 0) {
       void *cts;
@@ -582,7 +582,7 @@ static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_gl
       gc_free(cts, free_typed_data);
     }
   }
-  gc_commit(gcg, NULL);
+  gc_commit(gc_usr, NULL);
   return 0;
 }
 #include <getopt.h>

@@ -39,16 +39,16 @@ happens, the gc_runner can skip checking the rest of that threads working set.
 #define H_GC
 
 typedef void (*gc_free_func)(void*);
-struct gc_group;
+struct gc_user;
 struct gc_working_set {
   unsigned long length;
   void *members[]; // "FAM" or flexible array member, can be any length
 };
 
-struct gc_group *gc_register_user(void);
-void gc_lock(struct gc_group*);
-void gc_commit(struct gc_group*, struct gc_working_set *working_set);
-void gc_clear(struct gc_group*);
+struct gc_user *gc_register_user(void);
+void gc_lock(struct gc_user*);
+void gc_commit(struct gc_user*, struct gc_working_set *working_set);
+void gc_clear(struct gc_user*);
 void gc_run(void); // This probably shouldn't be run concurrently because
                    // it will spuriously fail to free things
                    // Also because ht_del now adds things to the GC list
