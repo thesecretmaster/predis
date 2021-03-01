@@ -3,7 +3,7 @@
 #include <string.h>
 #include "send_queue.h"
 
-#define SQE_INDEX(q, nfam, i) ((struct send_queue_elem*)(((char*)nfam) + (i * (sizeof(struct send_queue_elem) + q->element_length))))
+#define SQE_INDEX(q, nfam, i) ((struct send_queue_elem*)(((char*)nfam) + ((i) * (sizeof(struct send_queue_elem) + q->element_length))))
 
 struct send_queue_elem {
   volatile bool ready;
@@ -32,7 +32,7 @@ struct send_queue *send_queue_init(unsigned int length, unsigned int element_len
   }
   return q;
 }
-// #include <stdio.h>
+
 int send_queue_register(struct send_queue *q) {
   if (q->tail - q->head < q->length) {
     unsigned int rv = q->tail;
@@ -47,7 +47,7 @@ int send_queue_register(struct send_queue *q) {
   }
 }
 
-void send_queue_commit(struct send_queue *q, int idx, void *data) {
+void send_queue_commit(struct send_queue *q, unsigned int idx, void *data) {
   // printf("commit into %u\n", idx);
   memcpy(SQE_INDEX(q, q->contents, idx % q->length)->data, data, q->element_length);
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -73,7 +73,7 @@ void send_queue_commit(struct send_queue *q, int idx, void *data) {
 // }
 
 
-int send_queue_pop_start(struct send_queue *q, void **data) {
+int send_queue_pop_start(struct send_queue *q, void *data) {
   unsigned int attempt_idx = q->head;
   if (attempt_idx == q->tail)
     return -1; // Queue is empty
@@ -92,7 +92,7 @@ int send_queue_pop_start(struct send_queue *q, void **data) {
   }
 }
 
-int send_queue_pop_continue(struct send_queue *q, void **data) {
+int send_queue_pop_continue(struct send_queue *q, void *data) {
   if (SQE_INDEX(q, q->contents, (q->head + 1) % q->length)->ready && q->head_lock != q->tail) {
     q->head_lock += 1;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);

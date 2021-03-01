@@ -24,7 +24,6 @@
 #include <assert.h>
 #include <sys/epoll.h>
 
-// Don't care abotu padding right now
 struct conn_data {
   struct queue *processing_queue;
   struct queue *sending_queue;
@@ -69,19 +68,15 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(int epoll_fd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, struct queue **proc_q, int *par_fd) {
+static int packet_reciever(int epoll_fd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, void **proc_q, int *par_fd) {
   int cmd_status;
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
   *resp_allocs = resp_cmd_init(0x0);
-  struct queue *pc;
-  int fd;
-  cmd_status = resp_cmd_process(epoll_fd, *resp_allocs, cdata, &pc, &fd);
-  *proc_q = pc;
-  *par_fd = fd;
+  cmd_status = resp_cmd_process(epoll_fd, *resp_allocs, cdata, proc_q, par_fd);
   if (cmd_status == -2 || cmd_status == -1) {
-    printf("Connection %d other end closed\n", fd);
+    printf("Connection %d other end closed\n", *par_fd);
     return -1;
   } else if (cmd_status != 0) {
     printf("Protocol error: %d\n", cmd_status);
@@ -99,7 +94,8 @@ struct packet_reciever_data {
   int epoll_fd;
 };
 
-static void *packet_reciever_queue(void *_pr_data) {
+ __attribute__ ((unused))
+static inline void *packet_reciever_queue(void *_pr_data) {
   struct packet_reciever_data *pr_data = _pr_data;
   struct resp_allocations *resp_allocs;
   int ret_fd;
@@ -107,7 +103,7 @@ static void *packet_reciever_queue(void *_pr_data) {
   struct resp_conn_data *cdata;
   int rval;
   do {
-    rval = packet_reciever(pr_data->epoll_fd, &resp_allocs, &cdata, &proc_q, &ret_fd);
+    rval = packet_reciever(pr_data->epoll_fd, &resp_allocs, &cdata, (void**)&proc_q, &ret_fd);
     if (rval < 0) {
       queue_close(proc_q);
     } else if (rval > 0) {
@@ -344,7 +340,8 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
   resp_cmd_free(resp_allocs);
 }
 
-static void *runner_queue(void *_cdata) {
+__attribute__ ((unused))
+static inline void *runner_queue(void *_cdata) {
   struct conn_data *cdata = _cdata;
   struct queue *queue = cdata->processing_queue;
   struct resp_allocations *resp_allocs;
@@ -428,7 +425,8 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
     free(buf);
 }
 
-static void *sender(void *_obj) {
+__attribute__ ((unused))
+static inline void *sender(void *_obj) {
   struct conn_data *obj = _obj;
   struct queue *q = obj->sending_queue;
   struct pre_send pre_send;
@@ -465,7 +463,6 @@ static void *onestep_thread(void *_onestep_data) {
 
   struct resp_conn_data *rcdata;
   struct resp_allocations *resp_allocs;
-  struct queue *proc_q;
   int rval;
 
   struct gc_group *gc = gc_register_user();
@@ -474,9 +471,8 @@ static void *onestep_thread(void *_onestep_data) {
   ctx.sending_queue = sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
 
-  struct pre_send pre_send;
   do {
-    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, &sq, &fd);
+    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, (void**)&sq, &fd);
     if (rval < 0) {
       if (rval == -1) {
         shutdown(fd, 0);
@@ -494,16 +490,16 @@ static void *onestep_thread(void *_onestep_data) {
 
     ctx.reply_fd = fd;
     ctx.send_queue = sq;
-    ctx.send_queue_ptr = sq_ptr;
+    ctx.send_queue_ptr = (unsigned int)sq_ptr;
 
     runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, gc);
 
     do {
-      sq_rval = send_queue_pop_start(sq, &sq_data);
+      sq_rval = send_queue_pop_start(sq, (void*)&sq_data);
     } while (sq_rval == -3);
     if (sq_rval == 0) {
       send_pre_data(fd, &sq_data);
-      while (send_queue_pop_continue(sq, &sq_data) == 0) {
+      while (send_queue_pop_continue(sq, (void*)&sq_data) == 0) {
         send_pre_data(fd, &sq_data);
       }
     }

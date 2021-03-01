@@ -21,7 +21,7 @@ static int command_set(struct predis_ctx *ctx, struct predis_arg *data, char **a
       goto retry;
     }
   } else {
-    string_set(predis_arg_get(data, 0), argv[1], argv_lengths[1]);
+    string_set((struct string**)predis_arg_get(data, 0), argv[1], argv_lengths[1]);
   }
   return PREDIS_SUCCESS;
 }
@@ -86,7 +86,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
 
   char *str_raw;
   long length;
-  string_exchange(predis_arg_get(data, 0), &str_raw, &length, argv[1], argv_lengths[1]);
+  string_exchange((struct string**)predis_arg_get(data, 0), &str_raw, &length, argv[1], argv_lengths[1]);
   replyBulkString(ctx, str_raw, length);
   return PREDIS_SUCCESS;
 }

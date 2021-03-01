@@ -22,14 +22,13 @@ struct resp_spare_page {
   unsigned int size;
 };
 
-#pragma GCC diagnostic pop
-
 struct resp_conn_data {
   void *data;
   struct resp_spare_page spare_page;
   int fd;
 };
 
+#pragma GCC diagnostic pop
 struct resp_conn_data *resp_conn_data_init(int fd, void *data) {
   struct resp_conn_data *cd = malloc(sizeof(struct resp_conn_data));
   cd->spare_page.size = 0;
@@ -59,7 +58,7 @@ void resp_conn_data_prime(struct resp_conn_data *cdata, int epoll_fd) {
   epoll_ctl(epoll_fd, EPOLL_CTL_MOD, cdata->fd, &ev);
 }
 
-static inline int rp_recieve(int fd, void *buff, size_t len, int flags) {
+static inline ssize_t rp_recieve(int fd, void *buff, size_t len, int flags) {
   return recv(fd, buff, len, flags);
 }
 
