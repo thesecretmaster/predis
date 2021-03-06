@@ -58,11 +58,24 @@ void resp_conn_data_prime(struct resp_conn_data *cdata, int epoll_fd) {
   epoll_ctl(epoll_fd, EPOLL_CTL_MOD, cdata->fd, &ev);
 }
 
-static inline ssize_t rp_recieve(int fd, void *buff, size_t len, int flags) {
-  return recv(fd, buff, len, flags);
+#define BUFSIZE 256
+
+static inline ssize_t rp_fill_remaining(int fd, char *buf, unsigned int used_length) {
+  assert(used_length < BUFSIZE);
+  return recv(fd, buf + used_length, (size_t)(BUFSIZE - used_length), 0x0);
 }
 
-#define BUFSIZE 256
+static inline ssize_t rp_fill(int fd, char *buf, unsigned int used_length, size_t fill_up_to) {
+  assert(used_length <= fill_up_to);
+  return recv(fd, buf + used_length, fill_up_to - used_length, MSG_WAITALL);
+}
+
+static inline ssize_t rp_setup_buffer(int fd, char **buf) {
+  *buf = malloc(BUFSIZE + 1);
+  (*buf)[BUFSIZE] = '\0';
+  return recv(fd, *buf, BUFSIZE, 0x0);
+}
+
 static const char bs_end[] = "\r\n";
 // static const char *cmd_proc_net_err = "cmd_proc network error";
 
@@ -111,8 +124,7 @@ static int process_length_internal(int fd_data, char *buf_ptr_orig, char *curren
       // printf("loopi\n");
       if (current_buffer_length < BUFSIZE) {
         // printf("moar recv in loopi (cbl: %d)\n", current_buffer_length);
-        recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, (size_t)(BUFSIZE - current_buffer_length), 0x0);
-        if (recv_val <= 0)
+        if ((recv_val = rp_fill_remaining(fd_data, current_buffer, current_buffer_length)) <= 0)
           return -1; // Network error
         // printf("recv %d bytes\n", recv_val);
         current_buffer_length += recv_val;
@@ -129,8 +141,7 @@ static int process_length_internal(int fd_data, char *buf_ptr_orig, char *curren
         *new_page = malloc(BUFSIZE + 1);
         (*new_page)[BUFSIZE] = '\0';
         memcpy(*new_page, buf_ptr_orig, copy_length);
-        recv_val = rp_recieve(fd_data, (*new_page) + copy_length, BUFSIZE - copy_length, 0x0);
-        if (recv_val <= 0)
+        if ((recv_val = rp_fill_remaining(fd_data, *new_page, copy_length)) <= 0)
           return -2;
         *new_page_length = (unsigned int)recv_val + copy_length;
         buf_ptr = (*new_page);
@@ -165,10 +176,7 @@ int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struc
   *cdata = resp_cdata;
   struct resp_spare_page *spare_page = &resp_cdata->spare_page;
   if (spare_page->page == NULL) {
-    current_buffer = malloc(BUFSIZE + 1);
-    current_buffer[BUFSIZE] = '\0';
-    recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
-    if (recv_val <= 0)
+    if ((recv_val = rp_setup_buffer(fd_data, &current_buffer)) <= 0)
       return -1; // Network error
     current_buffer_length = (unsigned int)recv_val;
   } else {
@@ -229,19 +237,16 @@ int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struc
         // printf("C1\n");
         // Since we know that buf_ptr is pointed at or past the end, we can
         // assume that there's no data to copy -- all the data has been read.
-        current_buffer = malloc(BUFSIZE + 1);
-        current_buffer[BUFSIZE] = '\0';
+        recv_val = rp_setup_buffer(fd_data, &current_buffer);
         allocs->allocations[allocs->allocation_count] = current_buffer;
         allocs->allocation_count += 1;
         buf_ptr = current_buffer;
-        recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
         if (recv_val <= 0)
           return -4;
         current_buffer_length = (unsigned int)recv_val;
       } else {
         // printf("C2\n");
-        recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, BUFSIZE - current_buffer_length, 0x0);
-        if (recv_val <= 0)
+        if ((recv_val = rp_fill_remaining(fd_data, current_buffer, current_buffer_length)) <= 0)
           return -5;
         current_buffer_length += recv_val;
       }
@@ -293,8 +298,8 @@ int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struc
       // print_raw(buf_ptr);
       // printf("cbuflen: %d\n", current_buffer_length);
       allocs->argv[i] = buf_ptr;
-      assert((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length) >= 0);
-      recv_val = rp_recieve(fd_data, current_buffer + current_buffer_length, (size_t)((buf_ptr + bs_length + 2) - (current_buffer + current_buffer_length)), MSG_WAITALL);
+      assert(buf_ptr + bs_length + 2 >= current_buffer);
+      recv_val = rp_fill(fd_data, current_buffer, current_buffer_length, (size_t)((buf_ptr + bs_length + 2) - current_buffer));
       if (recv_val <= 0)
         return -8;
       current_buffer_length += recv_val;
@@ -310,8 +315,7 @@ int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struc
       allocs->allocations[allocs->allocation_count] = current_buffer;
       allocs->allocation_count += 1;
       memcpy(current_buffer, buf_ptr, copy_length);
-      assert((bs_length + 2) >= copy_length);
-      recv_val = rp_recieve(fd_data, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
+      recv_val = rp_fill(fd_data, current_buffer, copy_length, (size_t)bs_length + 2);
       if (recv_val <= 0)
         return -9;
       allocs->argv[i] = current_buffer;
@@ -327,18 +331,16 @@ int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struc
       allocs->allocations[allocs->allocation_count] = current_buffer;
       allocs->allocation_count += 1;
       memcpy(current_buffer, buf_ptr, copy_length);
-      recv_val = rp_recieve(fd_data, current_buffer + copy_length, (size_t)((bs_length + 2) - copy_length), MSG_WAITALL);
+      recv_val = rp_fill(fd_data, current_buffer, copy_length, (size_t)bs_length + 2);
       if (recv_val <= 0)
         return -9;
       *(current_buffer + bs_length) = '\0';
       allocs->argv[i] = current_buffer;
       // Prep for the next iteration
-      current_buffer = malloc(BUFSIZE + 1);
-      current_buffer[BUFSIZE] = '\0';
+      recv_val = rp_setup_buffer(fd_data, &current_buffer);
       allocs->allocations[allocs->allocation_count] = current_buffer;
       allocs->allocation_count += 1;
       buf_ptr = current_buffer;
-      recv_val = rp_recieve(fd_data, current_buffer, BUFSIZE, 0x0);
       if (recv_val <= 0)
         return -4;
       current_buffer_length = (unsigned int)recv_val;
