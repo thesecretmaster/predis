@@ -35,6 +35,13 @@ struct conn_data {
   int epoll_fd;
 };
 
+struct rw_pipe_data {
+  void *data;
+  struct resp_allocations *resp_allocs;
+  int fd;
+  int sq_ptr;
+};
+
 static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struct predis_arg *_data, char **argv, __attribute__((unused)) argv_length_t *argv_lengths, int argc) {
   printf("Starting load\n");
   if (argc != 1)
@@ -68,52 +75,71 @@ static int load_structures(struct predis_ctx *ctx, __attribute__((unused)) struc
 // #define argv_stack_length 10
 // #define argv_stack_string_length 50
 
-static int packet_reciever(int epoll_fd, struct resp_allocations **resp_allocs, struct resp_conn_data **cdata, void **proc_q, int *par_fd) {
-  int cmd_status;
+enum packet_reciever_status {
+  PR_CLOSED,
+  PR_ERROR,
+  PR_DONE,
+  PR_REARM_AGAIN,
+  PR_TOO_SHORT
+};
+
+static enum packet_reciever_status packet_reciever(struct resp_sm *sm, int pipe_write_fd, struct resp_allocations **resp_allocs) {
   long argc;
   char **argv;
   bulkstring_size_t *argv_lengths;
-  *resp_allocs = resp_cmd_init(0x0);
-  cmd_status = resp_cmd_process(epoll_fd, *resp_allocs, cdata, proc_q, par_fd);
-  if (cmd_status == -2 || cmd_status == -1) {
-    printf("Connection %d other end closed\n", *par_fd);
-    return -1;
-  } else if (cmd_status != 0) {
-    printf("Protocol error: %d\n", cmd_status);
-    return -2;
+  struct rw_pipe_data pipe_data;
+
+  retry_nowait:
+  switch (resp_cmd_process_sm(sm)) {
+    case (RESP_SM_STATUS_ERROR): {
+      printf("RESP ERROE!!!!\n");
+      return PR_ERROR;
+    }
+    case (RESP_SM_STATUS_EMPTY): {
+      printf("Waiting for moar data :(\n");
+      printf("Goin back\n");
+      return PR_REARM_AGAIN;
+    }
+    case (RESP_SM_STATUS_CLOSED): {
+      return PR_CLOSED;
+    }
+    case (RESP_SM_STATUS_DONE): {
+      *resp_allocs = resp_cmd_sm_allocs(sm);
+      break;
+    }
+    case (RESP_SM_STATUS_MORE): {
+      pipe_data.resp_allocs = resp_cmd_sm_allocs(sm);
+      pipe_data.fd = resp_sm_fd(sm);
+      pipe_data.data = resp_sm_data(sm);
+      do {
+        pipe_data.sq_ptr = send_queue_register(pipe_data.data);
+      } while (pipe_data.sq_ptr < 0);
+      write(pipe_write_fd, &pipe_data, sizeof(pipe_data));
+      goto retry_nowait;
+    }
   }
+
+
+  // *resp_allocs = resp_cmd_init(0x0);
+  // cmd_status = resp_cmd_process(epoll_fd, *resp_allocs, cdata, proc_q, par_fd);
+  // if (cmd_status == -2 || cmd_status == -1) {
+  //   printf("Connection %d other end closed\n", *par_fd);
+  //   return -1;
+  // } else if (cmd_status != 0) {
+  //   printf("Protocol error: %d\n", cmd_status);
+  //   return -2;
+  // }
   resp_cmd_args(*resp_allocs, &argc, &argv, &argv_lengths);
+  // printf("THE COMMAND:");
+  // for (int i = 0; i < argc; i++) {
+  //   printf(" %.*s (%lu)", argv_lengths[i], argv[i], argv_lengths[i]);
+  // }
+  // printf("\n");
   if (argc < 1) {
     printf("Command array too short (%ld)\n", argc);
-    return 1;
+    return PR_TOO_SHORT;
   }
-  return 0;
-}
-
-struct packet_reciever_data {
-  int epoll_fd;
-};
-
- __attribute__ ((unused))
-static inline void *packet_reciever_queue(void *_pr_data) {
-  struct packet_reciever_data *pr_data = _pr_data;
-  struct resp_allocations *resp_allocs;
-  int ret_fd;
-  struct queue *proc_q;
-  struct resp_conn_data *cdata;
-  int rval;
-  do {
-    rval = packet_reciever(pr_data->epoll_fd, &resp_allocs, &cdata, (void**)&proc_q, &ret_fd);
-    if (rval < 0) {
-      queue_close(proc_q);
-    } else if (rval > 0) {
-      continue;
-    } else {
-      resp_conn_data_prime(cdata, pr_data->epoll_fd);
-      while (queue_push(proc_q, &resp_allocs) != 0) {}
-    }
-  } while (true);
-  return NULL;
+  return PR_DONE;
 }
 
 #include "predis_arg_impl.c"
@@ -448,10 +474,12 @@ struct onestep_data {
   struct command_ht *command_ht;
   struct ht_table *global_ht;
   int epoll_fd;
+  int pipe_read_fd;
+  int pipe_write_fd;
 };
 
 #pragma GCC diagnostic pop
-
+#include <errno.h>
 static void *onestep_thread(void *_onestep_data) {
   struct onestep_data *os_data = _onestep_data;
   int fd;
@@ -461,9 +489,8 @@ static void *onestep_thread(void *_onestep_data) {
   struct pre_send sq_data;
   int sq_rval;
 
-  struct resp_conn_data *rcdata;
+  struct resp_sm *sm;
   struct resp_allocations *resp_allocs;
-  int rval;
 
   struct gc_user *gc = gc_register_user();
   struct predis_ctx ctx;
@@ -471,29 +498,67 @@ static void *onestep_thread(void *_onestep_data) {
   ctx.sending_queue = sending_queue;
   ctx.reply_buf = malloc(sizeof(char) * PREDIS_CTX_CHAR_BUF_SIZE);
 
+  struct epoll_event ev;
+  struct rw_pipe_data pipe_data;
+  ssize_t read_len;
   do {
-    rval = packet_reciever(os_data->epoll_fd, &resp_allocs, &rcdata, (void**)&sq, &fd);
-    if (rval < 0) {
-      if (rval == -1) {
-        shutdown(fd, 0);
-        close(fd);
+    if (epoll_wait(os_data->epoll_fd, &ev, 1, -1) != 1)
+      break;
+    if (ev.data.ptr == NULL) {
+      // We're reading from os->pipe_read_fd
+      read_len = read(os_data->pipe_read_fd, &pipe_data, sizeof(pipe_data));
+      if (read_len == sizeof(pipe_data)) {
+        fd = pipe_data.fd;
+        sq = pipe_data.data;
+        sq_ptr = pipe_data.sq_ptr;
+        resp_allocs = pipe_data.resp_allocs;
+      } else if (read_len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        continue;
+      } else {
+        printf("Read the wrong number of bytes from the pipe %ld\n", read_len);
+        break;
       }
-      continue;
-    } else if (rval > 0) {
-      continue;
-    }
+    } else {
+      // We're reading from an actual fd
+      sm = ev.data.ptr;
+      sq = resp_sm_data(sm);
+      fd = resp_sm_fd(sm);
+      switch (packet_reciever(sm, os_data->pipe_write_fd, &resp_allocs)) {
+        case (PR_ERROR):
+        case (PR_CLOSED): {
+          shutdown(fd, 0);
+          close(fd);
+          break;
+        }
+        case (PR_TOO_SHORT): {
+          continue;
+        }
+        case (PR_DONE): {
+          break;
+        }
+        case (PR_REARM_AGAIN): {
+          ev.events = EPOLLIN | EPOLLONESHOT;
+          ev.data.ptr = sm;
+          epoll_ctl(os_data->epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+          continue;
+        }
+      }
 
-    do {
-      sq_ptr = send_queue_register(sq);
-    } while (sq_ptr < 0);
-    resp_conn_data_prime(rcdata, os_data->epoll_fd);
+      do {
+        sq_ptr = send_queue_register(sq);
+      } while (sq_ptr < 0);
+
+      ev.events = EPOLLIN | EPOLLONESHOT;
+      ev.data.ptr = sm;
+      epoll_ctl(os_data->epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+    }
 
     ctx.reply_fd = fd;
     ctx.send_queue = sq;
     ctx.send_queue_ptr = (unsigned int)sq_ptr;
 
     runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, gc);
-
+    resp_cmd_free(resp_allocs);
     do {
       sq_rval = send_queue_pop_start(sq, (void*)&sq_data);
     } while (sq_rval == -3);
@@ -508,6 +573,7 @@ static void *onestep_thread(void *_onestep_data) {
     //   send_pre_data(fd, &pre_send);
     // }
   } while (true);
+  return NULL;
 }
 
 struct gc_data {
@@ -587,6 +653,7 @@ static int command_del(__attribute__((unused)) struct predis_ctx *ctx, void *_gl
 }
 #include <getopt.h>
 #include <sys/sysinfo.h>
+#include <fcntl.h>
 int main(int argc, char *argv[]) {
   signal(SIGINT, &sigint_handler);
 
@@ -677,20 +744,24 @@ int main(int argc, char *argv[]) {
   struct conn_data *obj;
   int epoll_fd = epoll_create(1024); // Just a hint; redis uses this so I guess we will
   struct epoll_event ev;
-  // struct packet_reciever_data *pr_data = malloc(sizeof(struct packet_reciever_data));
-  // pr_data->epoll_fd = epoll_fd;
-  // for (int i = 0; i < 4; i++) {
-  //   pthread_create(&pid, NULL, packet_reciever_queue, pr_data);
-  // }
+  int pipe_fds[2];
+  pipe(pipe_fds);
   struct onestep_data *os_data = malloc(sizeof(struct onestep_data));
   os_data->global_ht = global_ht;
   os_data->command_ht = global_command_ht;
   os_data->epoll_fd = epoll_fd;
+  os_data->pipe_read_fd = pipe_fds[0];
+  os_data->pipe_write_fd = pipe_fds[1];
+  fcntl(os_data->pipe_read_fd, F_SETFL, fcntl(os_data->pipe_read_fd, F_GETFL, 0) | O_NONBLOCK);
+  ev.events = EPOLLIN | EPOLLEXCLUSIVE;
+  ev.data.ptr = NULL;
+  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, os_data->pipe_read_fd, &ev);
   for (int i = 0; i < thread_count; i++) {
     pthread_create(&pid, NULL, onestep_thread, os_data);
   }
   while (1) {
     client_sock = accept(socket_fd, (struct sockaddr *)&their_addr, &addr_size);
+    fcntl(client_sock, F_SETFL, fcntl(client_sock, F_GETFL, 0) | O_NONBLOCK);
     printf("Accepted a conn %d!\n", client_sock);
     obj = malloc(sizeof(struct conn_data));
     obj->fd = client_sock;
@@ -704,7 +775,7 @@ int main(int argc, char *argv[]) {
     obj->command_ht = global_command_ht;
     obj->type_ht = global_type_ht;
     ev.events = EPOLLIN | EPOLLONESHOT;
-    ev.data.ptr = resp_conn_data_init(client_sock, send_queue_init(10, sizeof(struct pre_send)));
+    ev.data.ptr = resp_sm_init(client_sock, send_queue_init(10, sizeof(struct pre_send)));
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &ev);
     // pthread_create(&pid, NULL, runner_queue, obj);
     // pthread_create(&pid, NULL, sender, obj);

@@ -57,17 +57,18 @@ void command_ht_free(struct command_ht *ht) {
 
 // https://stackoverflow.com/a/7666577/4948732
 static unsigned long
-hash(const unsigned char *str)
+hash(const unsigned char *str, size_t len)
 {
     unsigned long hash = 5381;
     int c;
 
-    while ((c = *str++))
+    for (int i = 0; i < len; i++) {
+        c = str[i];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
         hash = ((hash << 5) + hash) + (unsigned)tolower(c); /* hash * 33 + c */
 #pragma GCC diagnostic pop
-
+    }
     return hash;
 }
 
@@ -223,7 +224,7 @@ static int parse_format_string(struct type_ht *type_ht, const char *str, const u
 }
 
 int command_ht_store(struct command_ht *ht, const char *command_name, const unsigned int command_name_length, command_func command, const char *fstring_string, const unsigned int fstring_string_length) {
-  unsigned int base_index = hash((const unsigned char*)command_name) % ht->size;
+  unsigned int base_index = hash((const unsigned char*)command_name, command_name_length) % ht->size;
   unsigned int index = base_index;
   while (ht->elements[index].command.ptr != NULL) {
     index = index + 1 % ht->size;
@@ -244,7 +245,7 @@ int command_ht_store(struct command_ht *ht, const char *command_name, const unsi
 }
 
 int command_ht_store_meta(struct command_ht *ht, const char *command_name, const unsigned int command_name_length, meta_command_func command) {
-  unsigned int base_index = hash((const unsigned char*)command_name) % ht->size;
+  unsigned int base_index = hash((const unsigned char*)command_name, command_name_length) % ht->size;
   unsigned int index = base_index;
   while (ht->elements[index].command.ptr != NULL) {
     index = index + 1 % ht->size;
@@ -260,7 +261,7 @@ int command_ht_store_meta(struct command_ht *ht, const char *command_name, const
 }
 
 int command_ht_fetch(struct command_ht *ht, char *command_name, const unsigned int command_name_length, struct format_string **fstring, union command_ht_command_funcs *command_func, bool *is_meta) {
-  unsigned int base_index = hash((unsigned char*)command_name) % ht->size;
+  unsigned int base_index = hash((unsigned char*)command_name, command_name_length) % ht->size;
   unsigned int index = base_index;
   while (ht->elements[index].command_name != NULL && (ht->elements[index].command_name_length != command_name_length || strncasecmp(command_name, ht->elements[index].command_name, command_name_length) != 0)) {
     index = index + 1 % ht->size;

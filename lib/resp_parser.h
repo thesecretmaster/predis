@@ -12,6 +12,20 @@ typedef long bulkstring_size_t;
 struct resp_allocations;
 struct resp_conn_data;
 
+enum resp_sm_status {
+  RESP_SM_STATUS_ERROR,
+  RESP_SM_STATUS_EMPTY,
+  RESP_SM_STATUS_CLOSED,
+  RESP_SM_STATUS_MORE,
+  RESP_SM_STATUS_DONE
+};
+struct resp_sm;
+int resp_sm_fd(struct resp_sm *sm);
+struct resp_sm *resp_sm_init(int fd, void *data);
+void *resp_sm_data(struct resp_sm *sm);
+struct resp_allocations *resp_cmd_sm_allocs(struct resp_sm *sm);
+enum resp_sm_status resp_cmd_process_sm(struct resp_sm *sm);
+
 struct resp_allocations *resp_cmd_init(unsigned int tag);
 unsigned int resp_get_tag(struct resp_allocations *allocs);
 int resp_cmd_process(int epoll_fd, struct resp_allocations * const allocs, struct resp_conn_data **cdata, void**data, int *fd);
