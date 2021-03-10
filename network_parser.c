@@ -92,7 +92,7 @@ static enum packet_reciever_status packet_reciever(struct resp_sm *sm, int pipe_
   retry_nowait:
   switch (resp_cmd_process_sm(sm)) {
     case (RESP_SM_STATUS_ERROR): {
-      printf("RESP ERROE!!!!\n");
+      printf("RESP ERROR!!!!\n");
       return PR_ERROR;
     }
     case (RESP_SM_STATUS_EMPTY): {
@@ -101,6 +101,7 @@ static enum packet_reciever_status packet_reciever(struct resp_sm *sm, int pipe_
       return PR_REARM_AGAIN;
     }
     case (RESP_SM_STATUS_CLOSED): {
+      // printf("Going to close %d\n", resp_sm_fd(sm));
       return PR_CLOSED;
     }
     case (RESP_SM_STATUS_DONE): {
@@ -392,7 +393,7 @@ static inline void *runner_queue(void *_cdata) {
   return NULL;
 }
 
-static void send_pre_data(int fd, struct pre_send *pre_send) {
+static int send_pre_data(int fd, struct pre_send *pre_send) {
   unsigned long ss_len;
   int len;
   char *buf;
@@ -443,12 +444,17 @@ static void send_pre_data(int fd, struct pre_send *pre_send) {
       for (unsigned i = 0; i < pre_send->data.array.length; i++) {
         send_pre_data(fd, &(pre_send->data.array.contents[i]));
       }
-      return;
+      return 0;
+    }
+    default: {
+      printf("Invalid PRE_SEND_TYPE %d\n", pre_send->type);
+      return -1;
     }
   }
   send(fd, buf, (size_t)len, MSG_NOSIGNAL);
   if (buf != nil_bs)
     free(buf);
+  return 0;
 }
 
 __attribute__ ((unused))
@@ -501,6 +507,8 @@ static void *onestep_thread(void *_onestep_data) {
   struct epoll_event ev;
   struct rw_pipe_data pipe_data;
   ssize_t read_len;
+  bool meta_break;
+  int pre_send_rval;
   do {
     if (epoll_wait(os_data->epoll_fd, &ev, 1, -1) != 1)
       break;
@@ -523,11 +531,14 @@ static void *onestep_thread(void *_onestep_data) {
       sm = ev.data.ptr;
       sq = resp_sm_data(sm);
       fd = resp_sm_fd(sm);
+      meta_break = false;
       switch (packet_reciever(sm, os_data->pipe_write_fd, &resp_allocs)) {
         case (PR_ERROR):
         case (PR_CLOSED): {
           shutdown(fd, 0);
           close(fd);
+          printf("Closed fd %d\n", fd);
+          meta_break = true;
           break;
         }
         case (PR_TOO_SHORT): {
@@ -543,6 +554,8 @@ static void *onestep_thread(void *_onestep_data) {
           continue;
         }
       }
+      if (meta_break)
+        continue;
 
       do {
         sq_ptr = send_queue_register(sq);
@@ -558,14 +571,14 @@ static void *onestep_thread(void *_onestep_data) {
     ctx.send_queue_ptr = (unsigned int)sq_ptr;
 
     runner(&ctx, resp_allocs, os_data->command_ht, os_data->global_ht, gc);
-    resp_cmd_free(resp_allocs);
+
     do {
       sq_rval = send_queue_pop_start(sq, (void*)&sq_data);
     } while (sq_rval == -3);
     if (sq_rval == 0) {
-      send_pre_data(fd, &sq_data);
+      assert(send_pre_data(fd, &sq_data) == 0);
       while (send_queue_pop_continue(sq, (void*)&sq_data) == 0) {
-        send_pre_data(fd, &sq_data);
+        assert(send_pre_data(fd, &sq_data) == 0);
       }
     }
 
@@ -573,6 +586,7 @@ static void *onestep_thread(void *_onestep_data) {
     //   send_pre_data(fd, &pre_send);
     // }
   } while (true);
+  printf("Thread exited???\n");
   return NULL;
 }
 
@@ -775,7 +789,7 @@ int main(int argc, char *argv[]) {
     obj->command_ht = global_command_ht;
     obj->type_ht = global_type_ht;
     ev.events = EPOLLIN | EPOLLONESHOT;
-    ev.data.ptr = resp_sm_init(client_sock, send_queue_init(10, sizeof(struct pre_send)));
+    ev.data.ptr = resp_sm_init(client_sock, send_queue_init(64, sizeof(struct pre_send)));
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_sock, &ev);
     // pthread_create(&pid, NULL, runner_queue, obj);
     // pthread_create(&pid, NULL, sender, obj);
