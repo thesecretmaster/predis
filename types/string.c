@@ -4,7 +4,7 @@
 
 struct string {
   long length;
-  char *data;
+  const char *data;
 };
 
 static const char string_type_name[] = "string";
@@ -30,7 +30,7 @@ static int free_string(void *_str) {
   return 0;
 }
 
-int string_set(struct string **data_loc, char *str_raw, const long length) {
+int string_set(struct string **data_loc, const char *str_raw, const long length) {
   struct string *str = malloc(sizeof(struct string));
   if (str == NULL)
     return -1;
@@ -40,14 +40,14 @@ int string_set(struct string **data_loc, char *str_raw, const long length) {
   return 0;
 }
 
-int string_get(struct string *data_loc, char **str_raw, long *length) {
+int string_get(struct string *data_loc, const char **str_raw, long *length) {
   struct string *str = __atomic_load_n(&data_loc, __ATOMIC_SEQ_CST);
   *str_raw = str->data;
   *length = str->length;
   return 0;
 }
 
-int string_exchange(struct string **data_loc, char **old_cts, long *old_length, char *new_cts, long new_length) {
+int string_exchange(struct string **data_loc, const char **old_cts, long *old_length, char *new_cts, long new_length) {
   struct string *str = malloc(sizeof(struct string));
   if (str == NULL)
     return -1;

@@ -30,7 +30,7 @@ static int command_get(struct predis_ctx *ctx, struct predis_arg *data, char **a
   if (argc != 1)
     return WRONG_ARG_COUNT;
 
-  char *str;
+  const char *str;
   long length;
   string_get(*predis_arg_get(data, 0), &str, &length);
   replyBulkString(ctx, str, length);
@@ -40,7 +40,7 @@ static int command_get(struct predis_ctx *ctx, struct predis_arg *data, char **a
 static int command_bitcount(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
   if (argc != 1 && argc != 3)
     return WRONG_ARG_COUNT;
-  char *str;
+  const char *str;
   long length;
   string_get(*predis_arg_get(data, 0), &str, &length);
 
@@ -69,7 +69,7 @@ static int command_bitcount(struct predis_ctx *ctx, struct predis_arg *data, cha
 }
 
 static int command_bitpos(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
-  char *str;
+  const char *str;
   long length;
   string_get(*predis_arg_get(data, 0), &str, &length);
   long bp = redisBitpos(str, (unsigned long)length, (int)strtol(argv[1], NULL, 10));
@@ -84,7 +84,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
   if (argv_lengths[1] < 0)
     return -100; // uhhhh use a real error next time ok?
 
-  char *str_raw;
+  const char *str_raw;
   long length;
   string_exchange((struct string**)predis_arg_get(data, 0), &str_raw, &length, argv[1], argv_lengths[1]);
   replyBulkString(ctx, str_raw, length);
@@ -92,7 +92,7 @@ static int command_getset(struct predis_ctx *ctx, struct predis_arg *data, char 
 }
 
 static int command_strlen(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
-  char *str;
+  const char *str;
   long length;
   string_get(*predis_arg_get(data, 0), &str, &length);
   replyInt(ctx, length);
@@ -100,7 +100,7 @@ static int command_strlen(struct predis_ctx *ctx, struct predis_arg *data, char 
 }
 
 static int command_getrange(struct predis_ctx *ctx, struct predis_arg *data, char **argv, argv_length_t *argv_lengths, int argc) {
-  char *str;
+  const char *str;
   long length;
   string_get(*predis_arg_get(data, 0), &str, &length);
   long start = strtol(argv[1], NULL, 10);
