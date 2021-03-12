@@ -214,7 +214,9 @@ static void runner(struct predis_ctx *ctx, struct resp_allocations *resp_allocs,
                 }
                 case HT_DUPLICATE_KEY: {
                   // HANDLE WRONGTYPE HERE
-                  data[i].data = *(struct predis_typed_data**)data[i].ht_value;
+                  do {
+                    data[i].data = __atomic_load_n((struct predis_typed_data**)data[i].ht_value, __ATOMIC_SEQ_CST);
+                  } while (data[i].data == NULL);
                   if (data[i].data->type != fstring->contents[fstring_index].details.type) {
                     replyError(ctx, "ERR WRONGTYPE");
                     error_happened = true;
@@ -770,7 +772,7 @@ int main(int argc, char *argv[]) {
   ev.events = EPOLLIN | EPOLLEXCLUSIVE;
   ev.data.ptr = NULL;
   epoll_ctl(epoll_fd, EPOLL_CTL_ADD, os_data->pipe_read_fd, &ev);
-  for (int i = 0; i < thread_count; i++) {
+  for (int i = 0; i < thread_count - 2; i++) {
     pthread_create(&pid, NULL, onestep_thread, os_data);
   }
   while (1) {
